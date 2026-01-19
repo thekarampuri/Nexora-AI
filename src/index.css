@@ -1,0 +1,32 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  --color-cyan-500: #00ccff;
+  --color-cyan-400: #00f3ff;
+
+  --font-orbitron: 'Orbitron', sans-serif;
+  --font-mono: 'Roboto Mono', 'monospace';
+}
+
+@layer base {
+  body {
+    @apply bg-black text-white overflow-hidden;
+    font-family: 'Orbitron', sans-serif;
+  }
+}
+
+/* Custom Scrollbar for Logs */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #00f3ff;
+  border-radius: 3px;
+}
