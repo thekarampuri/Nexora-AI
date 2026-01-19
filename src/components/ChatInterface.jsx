@@ -3,12 +3,21 @@ import { useApp } from '../context/AppContext';
 import { Send, Mic } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
 const ChatInterface = () => {
     const { addLog, toggleDevice, devices, user } = useApp();
     const [input, setInput] = useState('');
     const [response, setResponse] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const inputRef = useRef(null);
+
+    // Initialize Gemini
+    const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({
+        model: "gemini-1.5-flash",
+        systemInstruction: "You are 'NEXORA', an advanced AI core for a futuristic HUD system. Your responses should be concise, technical, and system-like. Avoid being human-level conversational. Use terms like 'Command processed', 'Data retrieved', 'Protocol engaged'. You are integrated into a system that controls a classroom light and a lab fan. You can also provide time/date and open google. If the user asks to turn on/off devices, acknowledge concisely."
+    });
 
     useEffect(() => {
         inputRef.current?.focus();
@@ -17,83 +26,73 @@ const ChatInterface = () => {
     const processCommand = async (cmd) => {
         const lowerCmd = cmd.toLowerCase();
         setIsProcessing(true);
+        setResponse(null); // Clear previous response
 
-        // Simulate processing delay
-        await new Promise(r => setTimeout(r, 600));
+        let reply = "";
+        let action = "";
 
-        let reply = "Command not recognized.";
-        let action = "Input ignored";
+        // 1. PRIORITIZE LOCAL SIMULATED COMMANDS (High efficiency / Offline-first feel)
 
-        // GREETING
-        if (lowerCmd.includes('hello') || lowerCmd.includes('hi')) {
-            const hour = new Date().getHours();
-            const timeOfDay = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
-            reply = `Good ${timeOfDay}, ${user?.username || 'User'}. Systems operational.`;
-            action = "Greeting";
-        }
         // TIME / DATE
-        else if (lowerCmd.includes('time') || lowerCmd.includes('date')) {
-            reply = `Current timestamp: ${new Date().toLocaleString()}`;
-            action = "Time check";
+        if (lowerCmd.includes('time') || lowerCmd.includes('date')) {
+            reply = `SYSTEM_TIME: ${new Date().toLocaleString()}`;
+            action = "Local: Time check";
         }
         // OPEN GOOGLE
-        else if (lowerCmd.includes('open google')) {
-            reply = "Redirecting to Google search grid...";
+        else if (lowerCmd.includes('open google') || lowerCmd.includes('search google')) {
+            reply = "REDIRECT_SEQUENCE: Initializing Google Search Grid...";
             window.open('https://google.com', '_blank');
-            action = "Opened Google";
+            action = "Local: Opened Google";
         }
         // TURN ON DEVICES
         else if (lowerCmd.includes('turn on') || lowerCmd.includes('switch on')) {
             if (lowerCmd.includes('light')) {
                 toggleDevice('classroomLight', true);
-                reply = "Classroom illumination enabled.";
-                action = "Turned on Light";
+                reply = "ACCESS_GRANT: Classroom illumination enabled.";
+                action = "Local: Light ON";
             } else if (lowerCmd.includes('fan')) {
                 toggleDevice('labFan', true);
-                reply = "Lab ventilation systems engaged.";
-                action = "Turned on Fan";
-            } else {
-                reply = "Specify device target.";
+                reply = "ACCESS_GRANT: Lab ventilation systems engaged.";
+                action = "Local: Fan ON";
             }
         }
         // TURN OFF DEVICES
         else if (lowerCmd.includes('turn off') || lowerCmd.includes('switch off')) {
             if (lowerCmd.includes('light')) {
                 toggleDevice('classroomLight', false);
-                reply = "Classroom illumination disabled.";
-                action = "Turned off Light";
+                reply = "ACCESS_GRANT: Classroom illumination disabled.";
+                action = "Local: Light OFF";
             } else if (lowerCmd.includes('fan')) {
                 toggleDevice('labFan', false);
-                reply = "Lab ventilation systems disengaged.";
-                action = "Turned off Fan";
-            } else {
-                reply = "Specify device target.";
+                reply = "ACCESS_GRANT: Lab ventilation systems disengaged.";
+                action = "Local: Fan OFF";
             }
         }
-        // STATUS / REPORT
+        // STATUS
         else if (lowerCmd.includes('status') || lowerCmd.includes('report')) {
-            const lightStatus = devices.classroomLight ? "ACTIVE" : "INACTIVE";
-            const fanStatus = devices.labFan ? "ACTIVE" : "INACTIVE";
-            reply = `SYSTEM REPORT: Light [${lightStatus}] | Fan [${fanStatus}]`;
-            action = "System Report";
+            reply = `STATUS_QUERY: Light [${devices.classroomLight ? 'ACTIVE' : 'OFFLINE'}] | Fan [${devices.labFan ? 'ACTIVE' : 'OFFLINE'}]`;
+            action = "Local: Status Report";
         }
-        // JOKE
-        else if (lowerCmd.includes('joke')) {
-            reply = "Why did the AI cross the road? To optimize the pathfinding algorithm.";
-            action = "Humor module";
-        }
-        // DEFAULT
-        else {
-            reply = "Command acknowledged. Processing...";
-            action = "Generic processing";
+
+        // 2. IF NO LOCAL ACTION MATCHED OR IF IT'S A GENERAL QUERY, USE GEMINI
+        if (!reply) {
+            try {
+                const result = await model.generateContent(cmd);
+                reply = result.response.text();
+                action = "Gemini: AI Brain Response";
+            } catch (error) {
+                console.error("Gemini Error:", error);
+                reply = "ERROR: Connection to AI core severed. Using fallback logic.";
+                action = "Error: Gemini Failed";
+            }
         }
 
         setResponse(reply);
-        addLog(`CMD: "${cmd}" -> ${action}`);
+        addLog(action);
         setIsProcessing(false);
 
         // Clear response after a few seconds
-        setTimeout(() => setResponse(null), 5000);
+        setTimeout(() => setResponse(null), 8000);
     };
 
     const handleSubmit = (e) => {
