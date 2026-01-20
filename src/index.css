@@ -17,7 +17,7 @@
   }
 }
 
-/* Custom Scrollbar for Logs */
+/* Global Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -29,4 +29,74 @@
 ::-webkit-scrollbar-thumb {
   background: #00f3ff;
   border-radius: 3px;
+}
+
+/* Custom Scrollbar for HUD Chat Area */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 243, 255, 0.3);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 243, 255, 0.5);
+}
+
+/* AI Answer Formatting (Prose) */
+.prose-cyan {
+  color: #e0faff;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  text-align: left;
+}
+
+.prose-cyan strong {
+  color: #00f3ff;
+  font-weight: 600;
+}
+
+.prose-cyan h1,
+.prose-cyan h2,
+.prose-cyan h3 {
+  color: #00f3ff;
+  font-family: 'Orbitron', sans-serif;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  font-weight: 700;
+}
+
+.prose-cyan ul,
+.prose-cyan ol {
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+  list-style-type: disc;
+}
+
+.prose-cyan li {
+  margin-bottom: 0.25rem;
+}
+
+.prose-cyan code {
+  background: rgba(0, 243, 255, 0.1);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.85em;
+  color: #00f3ff;
+}
+
+.prose-cyan pre {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid rgba(0, 243, 255, 0.2);
+  margin: 1rem 0;
 }
