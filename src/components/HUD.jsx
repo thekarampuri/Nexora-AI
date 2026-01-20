@@ -21,12 +21,12 @@ const HUD = () => {
                     loop
                     muted
                     playsInline
-                    className="w-full h-full object-cover opacity-80"
+                    className="w-full h-full object-cover opacity-100"
                 >
                     <source src={hudVideo} type="video/mp4" />
                 </video>
-                {/* Overlay for readability */}
-                <div className="absolute inset-0 bg-black/40 bg-[radial-gradient(circle_at_center,_transparent_0%,_#000000_100%)]"></div>
+                {/* Reduced overlay for brightness */}
+                <div className="absolute inset-0 bg-black/20 bg-[radial-gradient(circle_at_center,_transparent_0%,_#000000_100%)]"></div>
                 <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150"></div>
             </div>
 
