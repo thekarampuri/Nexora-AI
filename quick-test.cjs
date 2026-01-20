@@ -1,6 +1,8 @@
 const https = require('https');
 
-const API_KEY = 'AIzaSyDnSlLuK2p1NgKXsYoODcu1l19kBLcRfmg';
+// Replace with your API key for testing, but do NOT commit this file with the key.
+const API_KEY = 'YOUR_API_KEY_HERE';
+
 const data = JSON.stringify({
     contents: [{ parts: [{ text: "Say NEXORA ONLINE" }] }]
 });
