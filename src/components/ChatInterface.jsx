@@ -11,9 +11,12 @@ const ChatInterface = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isListening, setIsListening] = useState(false);
     const [isMuted, setIsMuted] = useState(false);
+    const [isSttSupported, setIsSttSupported] = useState(true);
+    const [sttStatus, setSttStatus] = useState('READY'); // READY, LISTENING, ERROR, UNSUPPORTED
     const inputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const recognitionRef = useRef(null);
+    const transcriptRef = useRef(''); // Use ref for stable transcript storage
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -26,46 +29,127 @@ const ChatInterface = () => {
     useEffect(() => {
         inputRef.current?.focus();
 
-        // Initialize Speech Recognition
+        // 1. Check Security Context
+        const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+        // 2. Initialize Speech Recognition
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (SpeechRecognition) {
+        if (!SpeechRecognition) {
+            console.warn("Speech Recognition not supported in this browser.");
+            setIsSttSupported(false);
+            setSttStatus('UNSUPPORTED');
+        } else if (!isSecure) {
+            console.warn("Speech Recognition requires a secure context (HTTPS or localhost).");
+            setIsSttSupported(false);
+            setSttStatus('INSECURE_CONTEXT');
+        } else {
             recognitionRef.current = new SpeechRecognition();
-            recognitionRef.current.continuous = false;
-            recognitionRef.current.interimResults = false;
+            recognitionRef.current.continuous = true;
+            recognitionRef.current.interimResults = true;
             recognitionRef.current.lang = 'en-US';
 
             recognitionRef.current.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                setInput(transcript);
-                processCommand(transcript);
-                setIsListening(false);
+                let interimTranscript = '';
+                let finalTranscriptChunk = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscriptChunk += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+
+                if (finalTranscriptChunk) {
+                    transcriptRef.current += finalTranscriptChunk;
+                }
+
+                const currentText = transcriptRef.current + interimTranscript;
+                if (currentText) {
+                    setInput(currentText);
+                }
             };
 
             recognitionRef.current.onerror = (event) => {
                 console.error("Speech Recognition Error:", event.error);
                 setIsListening(false);
+                setSttStatus('ERROR');
                 addLog(`STT_ERROR: ${event.error}`);
+
+                if (event.error === 'not-allowed') {
+                    alert("Microphone access denied. Please enable it in browser settings.");
+                } else if (event.error === 'network') {
+                    console.warn("Speech Recognition Network Error detected.");
+                    setSttStatus('NETWORK_ERROR');
+                } else if (event.error === 'no-speech') {
+                    setSttStatus('READY'); // Silent timeout, just reset
+                }
             };
 
             recognitionRef.current.onend = () => {
-                setIsListening(false);
+                // If isListening is still true, it means the session ended unexpectedly (e.g., silence)
+                // We restart it to keep the "futuristic" persistent listening feel.
+                if (isListening) {
+                    try {
+                        recognitionRef.current.start();
+                        console.log("STT_SESSION: Auto-restarted");
+                    } catch (err) {
+                        console.error("STT_SESSION: Restart failed", err);
+                        setIsListening(false);
+                        setSttStatus('READY');
+                    }
+                } else {
+                    setSttStatus('READY');
+                }
             };
         }
+
+        // Cleanup on unmount
+        return () => {
+            if (recognitionRef.current) {
+                recognitionRef.current.stop();
+            }
+            if (window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+            }
+        };
     }, []);
 
     const toggleListening = () => {
+        if (!isSttSupported) {
+            alert("Speech recognition is not supported in your browser. Please use Chrome or Edge.");
+            return;
+        }
+
         if (isListening) {
             recognitionRef.current?.stop();
             setIsListening(false);
+            setSttStatus('READY');
+            if (input.trim()) {
+                processCommand(input);
+            }
         } else {
             try {
-                window.speechSynthesis.cancel(); // Stop any ongoing speech
+                setInput('');
+                transcriptRef.current = ''; // Reset transcript ref
+                window.speechSynthesis.cancel();
                 recognitionRef.current?.start();
                 setIsListening(true);
+                setSttStatus('LISTENING');
                 addLog("STT_SESSION: Initialized");
             } catch (err) {
                 console.error("Failed to start recognition:", err);
+                setIsListening(false);
+                setSttStatus('ERROR');
             }
+        }
+    };
+
+    const toggleMute = () => {
+        const nextMuted = !isMuted;
+        setIsMuted(nextMuted);
+        if (nextMuted && window.speechSynthesis) {
+            window.speechSynthesis.cancel();
         }
     };
 
@@ -246,8 +330,9 @@ const ChatInterface = () => {
                     <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4">
                         <button
                             type="button"
-                            onClick={() => setIsMuted(!isMuted)}
+                            onClick={toggleMute}
                             className={`transition-colors ${isMuted ? 'text-red-500/50 hover:text-red-400' : 'text-cyan-500/50 hover:text-cyan-400'}`}
+                            title={isMuted ? "Unmute Nexora" : "Mute Nexora"}
                         >
                             {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                         </button>
@@ -255,8 +340,14 @@ const ChatInterface = () => {
                         <button
                             type="button"
                             onClick={toggleListening}
-                            disabled={isProcessing}
-                            className={`transition-all ${isListening ? 'text-red-500 animate-pulse scale-110' : 'text-cyan-500/50 hover:text-cyan-400'} disabled:opacity-30`}
+                            disabled={isProcessing || !isSttSupported}
+                            className={`transition-all ${!isSttSupported ? 'opacity-20 cursor-not-allowed' : (isListening ? 'text-red-500 animate-pulse scale-110' : (sttStatus === 'NETWORK_ERROR' ? 'text-orange-500' : 'text-cyan-500/50 hover:text-cyan-400'))} disabled:opacity-30`}
+                            title={
+                                sttStatus === 'INSECURE_CONTEXT' ? "Requires HTTPS/localhost" :
+                                    sttStatus === 'NETWORK_ERROR' ? "Speech server unavailable (Check Internet)" :
+                                        !isSttSupported ? "Speech not supported" :
+                                            (isListening ? "Stop Recording" : "Start Recording")
+                            }
                         >
                             {isListening ? <MicOff size={24} /> : <Mic size={24} />}
                         </button>

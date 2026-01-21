@@ -22,10 +22,10 @@ if not exist "server\node_modules\" (
 )
 
 echo [ACTIVE] Initializing Neural Link (Backend)...
-start "NEXORA_AI_CORE" cmd /k "npm run server"
+start /b npm run server
 
 echo [ACTIVE] Synchronizing HUD Interface (Frontend)...
-start "NEXORA_HUD_INTERFACE" cmd /k "npm run dev"
+start /b npm run dev
 
 echo.
 echo ------------------------------------------------------
@@ -33,5 +33,11 @@ echo NEXORA_STATUS: CALIBRATED
 echo ACCESS_POINT: http://localhost:5173
 echo ------------------------------------------------------
 echo.
-echo Press any key to terminate the launcher (Servers will continue in their respective windows)...
+echo [!] NOTE: Running in single terminal mode.
+echo [!] Press Ctrl+C twice to stop both servers.
+echo.
+
+:: Keep the window open
+:loop
 pause > nul
+goto loop
