@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Send } from 'lucide-react';
+import { Send, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 
@@ -9,8 +9,11 @@ const ChatInterface = () => {
     const [input, setInput] = useState('');
     const [messages, setMessages] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [isListening, setIsListening] = useState(false);
+    const [isMuted, setIsMuted] = useState(false);
     const inputRef = useRef(null);
     const messagesEndRef = useRef(null);
+    const recognitionRef = useRef(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -22,7 +25,72 @@ const ChatInterface = () => {
 
     useEffect(() => {
         inputRef.current?.focus();
+
+        // Initialize Speech Recognition
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            recognitionRef.current = new SpeechRecognition();
+            recognitionRef.current.continuous = false;
+            recognitionRef.current.interimResults = false;
+            recognitionRef.current.lang = 'en-US';
+
+            recognitionRef.current.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                setInput(transcript);
+                processCommand(transcript);
+                setIsListening(false);
+            };
+
+            recognitionRef.current.onerror = (event) => {
+                console.error("Speech Recognition Error:", event.error);
+                setIsListening(false);
+                addLog(`STT_ERROR: ${event.error}`);
+            };
+
+            recognitionRef.current.onend = () => {
+                setIsListening(false);
+            };
+        }
     }, []);
+
+    const toggleListening = () => {
+        if (isListening) {
+            recognitionRef.current?.stop();
+            setIsListening(false);
+        } else {
+            try {
+                window.speechSynthesis.cancel(); // Stop any ongoing speech
+                recognitionRef.current?.start();
+                setIsListening(true);
+                addLog("STT_SESSION: Initialized");
+            } catch (err) {
+                console.error("Failed to start recognition:", err);
+            }
+        }
+    };
+
+    const speakResponse = (text) => {
+        if (!window.speechSynthesis || isMuted) return;
+
+        // Clean markdown for better speech
+        const cleanText = text
+            .replace(/[*#_>`]/g, '') // Remove formatting chars
+            .replace(/\[.*?\]\(.*?\)/g, '') // Remove links
+            .replace(/SYSTEM_TIME:.*?/g, 'The current system time is ')
+            .replace(/STATUS:.*?/g, 'The current system status is ');
+
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.lang = 'en-US';
+        utterance.rate = 1.0;
+        utterance.pitch = 0.9; // Slightly lower for futuristic feel
+
+        // Find a suitable voice (optional, but premium feel)
+        const voices = window.speechSynthesis.getVoices();
+        const preferredVoice = voices.find(v => v.name.includes('Google US English') || v.name.includes('Female'));
+        if (preferredVoice) utterance.voice = preferredVoice;
+
+        window.speechSynthesis.speak(utterance);
+    };
 
     const processCommand = async (cmd) => {
         const lowerCmd = cmd.toLowerCase();
@@ -102,6 +170,8 @@ const ChatInterface = () => {
         const aiMsg = { role: 'ai', content: reply, id: Date.now() + 1 };
         setMessages(prev => [...prev, aiMsg]);
 
+        speakResponse(reply);
+
         addLog(action);
         setIsProcessing(false);
     };
@@ -172,13 +242,33 @@ const ChatInterface = () => {
                         className="w-full bg-black/40 backdrop-blur-xl border-b-2 border-cyan-500/50 py-5 px-8 text-xl text-center text-cyan-50 font-orbitron focus:outline-none focus:border-cyan-400 transition-all placeholder-cyan-500/20 rounded-t-lg"
                     />
                     <div className="absolute bottom-0 left-4 right-4 h-[1px] bg-gradient-to-r from-transparent via-cyan-500 to-transparent shadow-[0_0_10px_#00f3ff]"></div>
-                    <button
-                        type="submit"
-                        disabled={isProcessing}
-                        className="absolute right-10 top-1/2 -translate-y-1/2 text-cyan-500/50 hover:text-cyan-400 transition-colors disabled:opacity-30"
-                    >
-                        <Send size={24} />
-                    </button>
+
+                    <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4">
+                        <button
+                            type="button"
+                            onClick={() => setIsMuted(!isMuted)}
+                            className={`transition-colors ${isMuted ? 'text-red-500/50 hover:text-red-400' : 'text-cyan-500/50 hover:text-cyan-400'}`}
+                        >
+                            {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={toggleListening}
+                            disabled={isProcessing}
+                            className={`transition-all ${isListening ? 'text-red-500 animate-pulse scale-110' : 'text-cyan-500/50 hover:text-cyan-400'} disabled:opacity-30`}
+                        >
+                            {isListening ? <MicOff size={24} /> : <Mic size={24} />}
+                        </button>
+
+                        <button
+                            type="submit"
+                            disabled={isProcessing || isListening}
+                            className="text-cyan-500/50 hover:text-cyan-400 transition-colors disabled:opacity-30"
+                        >
+                            <Send size={24} />
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>
