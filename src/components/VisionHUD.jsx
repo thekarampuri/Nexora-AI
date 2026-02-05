@@ -138,8 +138,16 @@ const VisionHUD = ({ onClose, onDetect }) => {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
-            className="absolute inset-0 bg-black/90 z-40 flex flex-col items-center justify-center p-4 backdrop-blur-xl"
+            className="absolute inset-0 bg-black/90 z-40 flex flex-col items-center justify-center p-4 backdrop-blur-xl pointer-events-auto"
         >
+            {/* Top Right Close Button */}
+            <button
+                onClick={onClose}
+                className="absolute top-4 right-4 p-2 text-cyan-500 hover:text-red-500 transition-colors z-50 rounded-full border border-cyan-500/30 hover:border-red-500/50 bg-black/50"
+            >
+                <X size={24} />
+            </button>
+
             <div className="relative w-full max-w-4xl aspect-video bg-black rounded-lg overflow-hidden border border-cyan-500/30 shadow-[0_0_50px_rgba(0,243,255,0.2)]">
                 {/* Video Feed */}
                 <video
