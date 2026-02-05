@@ -17,6 +17,8 @@ const ChatInterface = () => {
     const messagesEndRef = useRef(null);
     const recognitionRef = useRef(null);
     const transcriptRef = useRef(''); // Use ref for stable transcript storage
+    const restartTimeoutRef = useRef(null);
+    const isListeningRef = useRef(false); // Ref to avoid stale closures in event handlers
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -65,6 +67,7 @@ const ChatInterface = () => {
                 }
 
                 const currentText = transcriptRef.current + interimTranscript;
+                console.log("STT_RESULT:", currentText); // Diagnostic log
                 if (currentText) {
                     setInput(currentText);
                 }
@@ -72,32 +75,43 @@ const ChatInterface = () => {
 
             recognitionRef.current.onerror = (event) => {
                 console.error("Speech Recognition Error:", event.error);
-                setIsListening(false);
                 setSttStatus('ERROR');
                 addLog(`STT_ERROR: ${event.error}`);
 
                 if (event.error === 'not-allowed') {
+                    setIsListening(false);
+                    isListeningRef.current = false;
                     alert("Microphone access denied. Please enable it in browser settings.");
                 } else if (event.error === 'network') {
                     console.warn("Speech Recognition Network Error detected.");
                     setSttStatus('NETWORK_ERROR');
+                    // We don't set isListening to false here so onend can attempt a restart
                 } else if (event.error === 'no-speech') {
-                    setSttStatus('READY'); // Silent timeout, just reset
+                    console.log("STT_SESSION: No speech detected, will restart...");
+                } else {
+                    setIsListening(false);
+                    isListeningRef.current = false;
                 }
             };
 
             recognitionRef.current.onend = () => {
-                // If isListening is still true, it means the session ended unexpectedly (e.g., silence)
-                // We restart it to keep the "futuristic" persistent listening feel.
-                if (isListening) {
-                    try {
-                        recognitionRef.current.start();
-                        console.log("STT_SESSION: Auto-restarted");
-                    } catch (err) {
-                        console.error("STT_SESSION: Restart failed", err);
-                        setIsListening(false);
-                        setSttStatus('READY');
-                    }
+                if (isListeningRef.current) {
+                    console.log("STT_SESSION: Continuous mode restart...");
+                    // Add a 100ms delay to avoid browser "already started" conflict
+                    if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+                    restartTimeoutRef.current = setTimeout(() => {
+                        if (isListeningRef.current) {
+                            try {
+                                recognitionRef.current.start();
+                                console.log("STT_SESSION: Auto-restarted");
+                            } catch (err) {
+                                console.error("STT_SESSION: Restart failed", err);
+                                setIsListening(false);
+                                isListeningRef.current = false;
+                                setSttStatus('READY');
+                            }
+                        }
+                    }, 100);
                 } else {
                     setSttStatus('READY');
                 }
@@ -106,7 +120,10 @@ const ChatInterface = () => {
 
         // Cleanup on unmount
         return () => {
+            if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
             if (recognitionRef.current) {
+                // Ensure recognition stops completely
+                recognitionRef.current.onend = null;
                 recognitionRef.current.stop();
             }
             if (window.speechSynthesis) {
@@ -121,9 +138,10 @@ const ChatInterface = () => {
             return;
         }
 
-        if (isListening) {
-            recognitionRef.current?.stop();
+        if (isListeningRef.current) {
+            isListeningRef.current = false;
             setIsListening(false);
+            recognitionRef.current?.stop();
             setSttStatus('READY');
             if (input.trim()) {
                 processCommand(input);
@@ -134,11 +152,13 @@ const ChatInterface = () => {
                 transcriptRef.current = ''; // Reset transcript ref
                 window.speechSynthesis.cancel();
                 recognitionRef.current?.start();
+                isListeningRef.current = true;
                 setIsListening(true);
                 setSttStatus('LISTENING');
                 addLog("STT_SESSION: Initialized");
             } catch (err) {
                 console.error("Failed to start recognition:", err);
+                isListeningRef.current = false;
                 setIsListening(false);
                 setSttStatus('ERROR');
             }

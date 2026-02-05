@@ -21,23 +21,15 @@ if not exist "server\node_modules\" (
     cd ..
 )
 
-echo [ACTIVE] Initializing Neural Link (Backend)...
-start /b npm run server
+echo [ACTIVE] Initializing NEXORA AI Ecosystem...
+echo [CONSOLE] Running Core and Interface via Neural Link (concurrently)...
+echo.
 
-echo [ACTIVE] Synchronizing HUD Interface (Frontend)...
-start /b npm run dev
+call npm start
 
 echo.
 echo ------------------------------------------------------
-echo NEXORA_STATUS: CALIBRATED
-echo ACCESS_POINT: http://localhost:5173
+echo NEXORA_SESSION: TERMINATED
 echo ------------------------------------------------------
 echo.
-echo [!] NOTE: Running in single terminal mode.
-echo [!] Press Ctrl+C twice to stop both servers.
-echo.
-
-:: Keep the window open
-:loop
-pause > nul
-goto loop
+pause
