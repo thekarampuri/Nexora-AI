@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { split } from 'postcss/lib/list';
 import { useApp } from '../context/AppContext';
-import { Send, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
+import { Send, Mic, MicOff, Volume2, VolumeX, Camera as CameraIcon } from 'lucide-react';
+import VisionHUD from './VisionHUD';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 
@@ -13,6 +15,8 @@ const ChatInterface = () => {
     const [isMuted, setIsMuted] = useState(false);
     const [isSttSupported, setIsSttSupported] = useState(true);
     const [sttStatus, setSttStatus] = useState('READY'); // READY, LISTENING, ERROR, UNSUPPORTED
+    const [isVisionMode, setIsVisionMode] = useState(false);
+    const [lastAnnouncedLabels, setLastAnnouncedLabels] = useState([]);
     const inputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const recognitionRef = useRef(null);
@@ -287,8 +291,32 @@ const ChatInterface = () => {
         setInput('');
     };
 
+    const handleVisionDetect = (labels) => {
+        // Simple logic to avoid spamming the same detection
+        const newItems = labels.filter(l => !lastAnnouncedLabels.includes(l));
+
+        if (newItems.length > 0) {
+            const text = `Detected: ${newItems.join(', ')}`;
+            // Only speak if not currently speaking to avoid overlap chaos
+            if (!window.speechSynthesis.speaking) {
+                speakResponse(text);
+                setLastAnnouncedLabels(prev => [...prev.slice(-5), ...newItems]); // Keep last 10
+            }
+        }
+    };
+
     return (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl h-[70vh] flex flex-col z-30 pointer-events-none">
+
+            <AnimatePresence>
+                {isVisionMode && (
+                    <VisionHUD
+                        onClose={() => setIsVisionMode(false)}
+                        onDetect={handleVisionDetect}
+                    />
+                )}
+            </AnimatePresence>
+
             {/* Scrollable Message Area */}
             <div className="flex-1 overflow-y-auto px-4 py-8 custom-scrollbar pointer-events-auto">
                 <div className="flex flex-col gap-6">
@@ -370,6 +398,15 @@ const ChatInterface = () => {
                             }
                         >
                             {isListening ? <MicOff size={24} /> : <Mic size={24} />}
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setIsVisionMode(!isVisionMode)}
+                            className={`transition-colors ${isVisionMode ? 'text-cyan-400' : 'text-cyan-500/50 hover:text-cyan-400'}`}
+                            title="Toggle Vision Mode"
+                        >
+                            <CameraIcon size={20} />
                         </button>
 
                         <button
