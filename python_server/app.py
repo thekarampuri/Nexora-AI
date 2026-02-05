@@ -10,9 +10,9 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Load YOLOv8 model (using a lightweight version for speed)
-# It will download 'yolov8n.pt' automatically on first run
-model = YOLO('yolov8n.pt')
+# Load YOLOv8 model (using medium version for better accuracy)
+# It will download 'yolov8m.pt' automatically on first run
+model = YOLO('yolov8m.pt')
 
 @app.route('/detect', methods=['POST'])
 def detect():
