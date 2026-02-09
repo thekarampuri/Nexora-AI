@@ -78,6 +78,14 @@ const ChatInterface = () => {
             };
 
             recognitionRef.current.onerror = (event) => {
+                // Network and no-speech errors are normal during continuous recognition
+                // They trigger auto-restart, so we don't need to log them as errors
+                if (event.error === 'network' || event.error === 'no-speech') {
+                    // Silent handling - these are expected during continuous mode
+                    return;
+                }
+
+                // Log actual errors
                 console.error("Speech Recognition Error:", event.error);
                 setSttStatus('ERROR');
                 addLog(`STT_ERROR: ${event.error}`);
@@ -86,13 +94,12 @@ const ChatInterface = () => {
                     setIsListening(false);
                     isListeningRef.current = false;
                     alert("Microphone access denied. Please enable it in browser settings.");
-                } else if (event.error === 'network') {
-                    console.warn("Speech Recognition Network Error detected.");
-                    setSttStatus('NETWORK_ERROR');
-                    // We don't set isListening to false here so onend can attempt a restart
-                } else if (event.error === 'no-speech') {
-                    console.log("STT_SESSION: No speech detected, will restart...");
+                } else if (event.error === 'aborted') {
+                    // User stopped it, this is normal
+                    setIsListening(false);
+                    isListeningRef.current = false;
                 } else {
+                    // Other errors - stop listening
                     setIsListening(false);
                     isListeningRef.current = false;
                 }
@@ -100,16 +107,15 @@ const ChatInterface = () => {
 
             recognitionRef.current.onend = () => {
                 if (isListeningRef.current) {
-                    console.log("STT_SESSION: Continuous mode restart...");
-                    // Add a 100ms delay to avoid browser "already started" conflict
+                    // Silently restart - this is normal continuous mode behavior
                     if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
                     restartTimeoutRef.current = setTimeout(() => {
                         if (isListeningRef.current) {
                             try {
                                 recognitionRef.current.start();
-                                console.log("STT_SESSION: Auto-restarted");
+                                // Silently restarted - no console spam
                             } catch (err) {
-                                console.error("STT_SESSION: Restart failed", err);
+                                console.error("STT_SESSION: Failed to restart", err);
                                 setIsListening(false);
                                 isListeningRef.current = false;
                                 setSttStatus('READY');
@@ -143,14 +149,22 @@ const ChatInterface = () => {
         }
 
         if (isListeningRef.current) {
+            // Stopping - submit the transcription
             isListeningRef.current = false;
             setIsListening(false);
             recognitionRef.current?.stop();
             setSttStatus('READY');
-            if (input.trim()) {
-                processCommand(input);
-            }
+
+            // Auto-submit after a short delay to ensure final transcript is captured
+            setTimeout(() => {
+                const finalText = input.trim();
+                if (finalText) {
+                    processCommand(finalText);
+                    setInput(''); // Clear input after submission
+                }
+            }, 300);
         } else {
+            // Starting - begin listening
             try {
                 setInput('');
                 transcriptRef.current = ''; // Reset transcript ref
@@ -159,7 +173,7 @@ const ChatInterface = () => {
                 isListeningRef.current = true;
                 setIsListening(true);
                 setSttStatus('LISTENING');
-                addLog("STT_SESSION: Initialized");
+                addLog("STT_SESSION: Voice input active");
             } catch (err) {
                 console.error("Failed to start recognition:", err);
                 isListeningRef.current = false;
@@ -292,15 +306,43 @@ const ChatInterface = () => {
     };
 
     const handleVisionDetect = (labels) => {
-        // Simple logic to avoid spamming the same detection
-        const newItems = labels.filter(l => !lastAnnouncedLabels.includes(l));
+        // Advanced cooldown logic to prevent repetitive announcements
+        const now = Date.now();
+        const COOLDOWN_MS = 5000; // 5 seconds cooldown per object
+
+        // Filter for truly new items (not announced recently)
+        const newItems = labels.filter(label => {
+            const lastAnnounced = lastAnnouncedLabels.find(item =>
+                typeof item === 'object' ? item.label === label : item === label
+            );
+
+            if (!lastAnnounced) return true; // Never announced
+
+            // If it's an object with timestamp, check cooldown
+            if (typeof lastAnnounced === 'object') {
+                return (now - lastAnnounced.time) > COOLDOWN_MS;
+            }
+
+            return false; // Already announced recently
+        });
 
         if (newItems.length > 0) {
             const text = `Detected: ${newItems.join(', ')}`;
-            // Only speak if not currently speaking to avoid overlap chaos
+
+            // Only speak if not currently speaking
             if (!window.speechSynthesis.speaking) {
                 speakResponse(text);
-                setLastAnnouncedLabels(prev => [...prev.slice(-5), ...newItems]); // Keep last 10
+
+                // Update with timestamps
+                const newEntries = newItems.map(label => ({ label, time: now }));
+                setLastAnnouncedLabels(prev => {
+                    // Remove old entries for the same labels
+                    const filtered = prev.filter(item =>
+                        !newItems.includes(typeof item === 'object' ? item.label : item)
+                    );
+                    // Add new entries and keep last 20
+                    return [...filtered, ...newEntries].slice(-20);
+                });
             }
         }
     };
