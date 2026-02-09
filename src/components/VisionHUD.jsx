@@ -79,14 +79,20 @@ const VisionHUD = ({ onClose, onDetect }) => {
 
             if (response.ok) {
                 const data = await response.json();
-                drawDetections(ctx, data.detections);
+
+                // Filter out 'person' detections to avoid repetitive announcements
+                const filteredDetections = data.detections.filter(d =>
+                    d.label.toLowerCase() !== 'person'
+                );
+
+                drawDetections(ctx, filteredDetections);
 
                 // Calculate pseudo-FPS based on round trip
                 const duration = performance.now() - start;
                 setFps(Math.round(1000 / duration));
 
-                // Notify parent for TTS announcements
-                const uniqueLabels = [...new Set(data.detections.map(d => d.label))];
+                // Notify parent for TTS announcements (only non-person objects)
+                const uniqueLabels = [...new Set(filteredDetections.map(d => d.label))];
                 if (onDetect && uniqueLabels.length > 0) {
                     onDetect(uniqueLabels);
                 }
