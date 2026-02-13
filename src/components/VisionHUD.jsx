@@ -7,9 +7,44 @@ const VisionHUD = ({ onClose, onDetect }) => {
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const [isStreaming, setIsStreaming] = useState(false);
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [registerName, setRegisterName] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [fps, setFps] = useState(0);
     const streamRef = useRef(null);
     const socketRef = useRef(null);
+
+    const handleRegister = async () => {
+        if (!videoRef.current || !registerName) return;
+        setIsSubmitting(true);
+
+        try {
+            const video = videoRef.current;
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const imageBase64 = canvas.toDataURL('image/jpeg', 0.8);
+
+            const response = await fetch('http://localhost:5001/register-face', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: imageBase64, name: registerName })
+            });
+
+            if (response.ok) {
+                alert(`Identity Verified: ${registerName.toUpperCase()}`);
+                setIsRegistering(false);
+                setRegisterName("");
+            } else {
+                alert("Registration Failed. Try again.");
+            }
+        } catch (error) {
+            console.error("Registration Error:", error);
+            alert("Connection Error");
+        }
+        setIsSubmitting(false);
+    };
 
     useEffect(() => {
         // Initialize Socket.IO connection
@@ -127,10 +162,25 @@ const VisionHUD = ({ onClose, onDetect }) => {
             const width = x2 - x1;
             const height = y2 - y1;
 
-            // Draw Box
-            const isFace = det.label === 'face';
-            const color = isFace ? '#ffd700' : '#00f3ff';
+            let color = '#00f3ff'; // Default Cyan (Object)
+            let labelText = '';
 
+            if (det.label === 'face') {
+                if (det.name && det.name !== "Unknown") {
+                    // Verified Face
+                    color = '#00ff00'; // Green
+                    labelText = `${det.name.toUpperCase()} [VERIFIED]`;
+                } else {
+                    // Unknown Face
+                    color = '#ffd700'; // Gold
+                    labelText = `UNKNOWN #${det.id}`;
+                }
+            } else {
+                // Object
+                labelText = det.id !== -1 ? `${det.label} #${det.id}` : det.label;
+            }
+
+            // Draw Box
             ctx.strokeStyle = color;
             ctx.lineWidth = 2;
             ctx.strokeRect(x1, y1, width, height);
@@ -146,10 +196,7 @@ const VisionHUD = ({ onClose, onDetect }) => {
 
             // Label Background
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillRect(x1, y1 - 25, ctx.measureText(det.label).width + 20, 25);
-
-            // Show ID if available
-            const labelText = det.id !== -1 ? `${det.label} #${det.id}` : det.label;
+            ctx.fillRect(x1, y1 - 25, ctx.measureText(labelText).width + 20, 25);
 
             // Label Text
             ctx.fillStyle = color;
@@ -206,13 +253,55 @@ const VisionHUD = ({ onClose, onDetect }) => {
                 </div>
             </div>
 
-            <button
-                onClick={onClose}
-                className="mt-6 px-8 py-3 bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 hover:text-red-200 transition-all rounded font-orbitron tracking-widest flex items-center gap-2"
-            >
-                <X size={18} />
-                TERMINATE VISUAL LINK
-            </button>
+            {/* Controls */}
+            <div className="flex gap-4 mt-6">
+                <button
+                    onClick={() => setIsRegistering(true)}
+                    className="px-8 py-3 bg-cyan-500/20 border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/30 hover:text-cyan-200 transition-all rounded font-orbitron tracking-widest flex items-center gap-2"
+                >
+                    <Activity size={18} />
+                    SCAN IDENTITY
+                </button>
+
+                <button
+                    onClick={onClose}
+                    className="px-8 py-3 bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 hover:text-red-200 transition-all rounded font-orbitron tracking-widest flex items-center gap-2"
+                >
+                    <X size={18} />
+                    TERMINATE LINK
+                </button>
+            </div>
+
+            {/* Registration Modal */}
+            {isRegistering && (
+                <div className="absolute inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+                    <div className="bg-gray-900 border border-cyan-500/50 p-6 rounded-lg max-w-md w-full shadow-[0_0_50px_rgba(0,243,255,0.2)]">
+                        <h3 className="text-cyan-400 font-orbitron text-xl mb-4">NEW IDENTITY REGISTRATION</h3>
+                        <input
+                            type="text"
+                            placeholder="ENTER NAME"
+                            value={registerName}
+                            onChange={(e) => setRegisterName(e.target.value)}
+                            className="w-full bg-black border border-cyan-500/30 text-cyan-100 p-3 rounded mb-4 focus:outline-none focus:border-cyan-500"
+                        />
+                        <div className="flex gap-4 justify-end">
+                            <button
+                                onClick={() => setIsRegistering(false)}
+                                className="px-4 py-2 text-gray-400 hover:text-white"
+                            >
+                                CANCEL
+                            </button>
+                            <button
+                                onClick={handleRegister}
+                                disabled={isSubmitting || !registerName}
+                                className="px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded font-bold disabled:opacity-50"
+                            >
+                                {isSubmitting ? "PROCESSING..." : "CONFIRM"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </motion.div>
     );
 };

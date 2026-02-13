@@ -7,19 +7,26 @@ import cv2
 import numpy as np
 import base64
 import os
-import mediapipe as mp
+from deepface import DeepFace
 
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-# Load YOLOv8 model (using nano version for speed)
-# It will download 'yolov8n.pt' automatically on first run
+# Load YOLOv8 model
 model = YOLO('yolov8n.pt')
 
-# Initialize MediaPipe Face Detection
-mp_face_detection = mp.solutions.face_detection
-face_detection = mp_face_detection.FaceDetection(min_detection_confidence=0.5)
+# Initialize OpenCV Face Detector (Haar Cascade)
+# This is a robust fallback since MediaPipe had installation issues
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+# Recognition Cache
+face_id_cache = {} # Map track_id -> name
+frame_count = 0
+
+# Ensure known_faces directory exists
+if not os.path.exists('known_faces'):
+    os.makedirs('known_faces')
 
 @socketio.on('connect')
 def handle_connect():
@@ -31,6 +38,7 @@ def handle_disconnect():
 
 @socketio.on('detect_frame')
 def handle_frame(data):
+    global frame_count
     try:
         if 'image' not in data:
             return
@@ -45,9 +53,9 @@ def handle_frame(data):
         
         height, width, _ = img.shape
         detections = []
+        frame_count += 1
 
         # --- 1. YOLO Object Detection ---
-        # Run inference with tracking
         results = model.track(img, persist=True, verbose=False)
         
         for r in results:
@@ -59,8 +67,6 @@ def handle_frame(data):
                 label = model.names[cls]
                 track_id = int(box.id[0]) if box.id is not None else -1
 
-                # Filter out 'person' from YOLO since we want to focus on 'face'
-                # but you can keep it if you want both body and face boxes
                 if label != 'person':
                     detections.append({
                         "bbox": [x1, y1, x2, y2],
@@ -70,42 +76,88 @@ def handle_frame(data):
                         "type": "object"
                     })
 
-        # --- 2. MediaPipe Face Detection ---
-        # Convert to RGB for MediaPipe
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        face_results = face_detection.process(img_rgb)
+        # --- 2. OpenCV Face Detection (Haar Cascade) ---
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5) # Tuned parameters
 
-        if face_results.detections:
-            for i, detection in enumerate(face_results.detections):
-                bboxC = detection.location_data.relative_bounding_box
-                x1 = int(bboxC.xmin * width)
-                y1 = int(bboxC.ymin * height)
-                w = int(bboxC.width * width)
-                h = int(bboxC.height * height)
-                x2 = x1 + w
-                y2 = y1 + h
-                
-                conf = detection.score[0]
+        for i, (x, y, w, h) in enumerate(faces):
+            x1, y1 = x, y
+            x2, y2 = x + w, y + h
+            
+            face_id = i + 100 # Simple temporary ID
+            name = "Unknown"
+            
+            # Run Recognition every 30 frames (approx 1-2 seconds)
+            if frame_count % 30 == 0:
+                try:
+                    # Crop face
+                    face_img = img[y1:y2, x1:x2]
+                    if face_img.size > 0:
+                        # Search in DB
+                        dfs = DeepFace.find(img_path=face_img, 
+                                          db_path="known_faces", 
+                                          model_name="VGG-Face", 
+                                          detector_backend="opencv",
+                                          enforce_detection=False,
+                                          silent=True)
+                        
+                        if len(dfs) > 0 and not dfs[0].empty:
+                            full_path = dfs[0].iloc[0]['identity']
+                            filename = os.path.basename(full_path)
+                            name = os.path.splitext(filename)[0]
+                            face_id_cache[face_id] = name
+                except Exception as e:
+                    print(f"Recognition Error: {e}")
+            
+            # Use cached name if available
+            if face_id in face_id_cache:
+                name = face_id_cache[face_id]
 
-                detections.append({
-                    "bbox": [x1, y1, x2, y2],
-                    "confidence": conf,
-                    "label": "face",
-                    "id": i + 100, # Mock ID for faces (100+) to distinguish from objects
-                    "type": "face"
-                })
+            detections.append({
+                "bbox": [x1, y1, x2, y2],
+                "confidence": 0.9, # Haar doesn't give confidence, assume high if detected
+                "label": "face",
+                "name": name,
+                "id": face_id,
+                "type": "face"
+            })
 
         emit('detection_result', {"detections": detections})
 
     except Exception as e:
         print(f"Error processing frame: {e}")
 
+@app.route('/register-face', methods=['POST'])
+def register_face():
+    try:
+        data = request.json
+        if 'image' not in data or 'name' not in data:
+            return jsonify({"error": "Missing image or name"}), 400
+            
+        name = data['name'].replace(" ", "_") # Sanitize name
+        image_data = data['image'].split(',')[1]
+        
+        # Save image
+        filepath = os.path.join("known_faces", f"{name}.jpg")
+        with open(filepath, "wb") as f:
+            f.write(base64.b64decode(image_data))
+            
+        # Clear representation cache if it exists so DeepFace re-scans folder
+        pkl_path = os.path.join("known_faces", "representations_vgg_face.pkl")
+        if os.path.exists(pkl_path):
+            os.remove(pkl_path)
+            
+        return jsonify({"status": "success", "message": f"Registered {name}"})
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         "status": "active", 
         "model_object": "yolov8n", 
-        "model_face": "mediapipe",
+        "model_face": "opencv-haar + deepface",
         "mode": "socketio"
     })
 
@@ -114,9 +166,9 @@ def model_info():
     """Get detailed information about the loaded model"""
     try:
         return jsonify({
-            "model_name": "YOLOv8 Nano + MediaPipe",
+            "model_name": "YOLOv8 Nano + OpenCV Haar + DeepFace",
             "model_file": "yolov8n.pt",
-            "framework": "Ultralytics YOLO + Google MediaPipe",
+            "framework": "Ultralytics YOLO + OpenCV + DeepFace",
             "num_classes": len(model.names) + 1,
             "status": "loaded"
         })
@@ -126,7 +178,7 @@ def model_info():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     print(f"🚀 NEXORA Vision Core Starting on port {port}")
-    print(f"📦 Model: YOLOv8 Nano (yolov8n.pt) + MediaPipe Face")
+    print(f"📦 Model: YOLOv8 Nano + OpenCV Face + DeepFace")
     print(f"⚡ Protocol: WebSockets (SocketIO)")
-    print(f"✅ Ready for real-time detected")
+    print(f"✅ Ready for real-time detection & recognition")
     socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
