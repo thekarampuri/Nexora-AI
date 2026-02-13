@@ -1,5 +1,5 @@
-
 import React, { useEffect, useRef, useState } from 'react';
+import { io } from 'socket.io-client';
 import { Camera, X, Activity } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -8,20 +8,62 @@ const VisionHUD = ({ onClose, onDetect }) => {
     const canvasRef = useRef(null);
     const [isStreaming, setIsStreaming] = useState(false);
     const [fps, setFps] = useState(0);
-    const lastRequestRef = useRef(0);
     const streamRef = useRef(null);
-    const [detectedItems, setDetectedItems] = useState([]);
+    const socketRef = useRef(null);
 
     useEffect(() => {
+        // Initialize Socket.IO connection
+        socketRef.current = io('http://localhost:5001', {
+            transports: ['websocket'],
+            reconnection: true
+        });
+
+        socketRef.current.on('connect', () => {
+            console.log("Connected to Vision Server via Socket.IO");
+        });
+
+        socketRef.current.on('detection_result', (data) => {
+            if (!canvasRef.current || !data.detections) return;
+
+            // Calculate latency (approximate, since we don't track per-frame ID easily here without more logic)
+            // For now, we update FPS based on receiving speed
+            setFps((prev) => {
+                const now = performance.now();
+                return Math.round(1000 / (now - (window.lastFrameTime || now - 30)));
+            });
+            window.lastFrameTime = performance.now();
+
+            const ctx = canvasRef.current.getContext('2d');
+
+            // Filter out 'person' detections to avoid repetitive announcements
+            const filteredDetections = data.detections.filter(d =>
+                d.label.toLowerCase() !== 'person'
+            );
+
+            drawDetections(ctx, filteredDetections);
+
+            // Notify parent for TTS announcements
+            const uniqueLabels = [...new Set(filteredDetections.map(d => d.label))];
+            if (onDetect && uniqueLabels.length > 0) {
+                onDetect(uniqueLabels);
+            }
+        });
+
         startCamera();
-        return () => stopCamera();
+
+        return () => {
+            stopCamera();
+            if (socketRef.current) socketRef.current.disconnect();
+        };
     }, []);
 
     useEffect(() => {
+        let interval;
         if (isStreaming) {
-            const interval = setInterval(captureAndDetect, 500); // Pulse every 500ms
-            return () => clearInterval(interval);
+            // Send frames as fast as possible (limiting to ~15 FPS to not overload)
+            interval = setInterval(captureAndSend, 66);
         }
+        return () => clearInterval(interval);
     }, [isStreaming]);
 
     const startCamera = async () => {
@@ -29,7 +71,9 @@ const VisionHUD = ({ onClose, onDetect }) => {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
             });
-            videoRef.current.srcObject = stream;
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+            }
             streamRef.current = stream;
             setIsStreaming(true);
         } catch (err) {
@@ -46,21 +90,15 @@ const VisionHUD = ({ onClose, onDetect }) => {
         setIsStreaming(false);
     };
 
-    const captureAndDetect = async () => {
-        if (!videoRef.current || !canvasRef.current || !isStreaming) return;
+    const captureAndSend = () => {
+        if (!videoRef.current || !socketRef.current || !isStreaming) return;
 
         const video = videoRef.current;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-        // Match canvas size to video
-        if (canvas.width !== video.videoWidth) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-        }
+        // Ensure video is ready
+        if (video.readyState !== 4) return;
 
-        // Draw current frame to hidden canvas process (or use the visible one for overlay clearing)
-        // We will just send base64 to server
+        // Draw current frame to offscreen canvas
         const offscreen = document.createElement('canvas');
         offscreen.width = video.videoWidth;
         offscreen.height = video.videoHeight;
@@ -69,45 +107,20 @@ const VisionHUD = ({ onClose, onDetect }) => {
 
         const imageBase64 = offscreen.toDataURL('image/jpeg', 0.5); // Quality 0.5 for speed
 
-        const start = performance.now();
-        try {
-            const response = await fetch('http://localhost:5001/detect', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: imageBase64 })
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-
-                // Filter out 'person' detections to avoid repetitive announcements
-                const filteredDetections = data.detections.filter(d =>
-                    d.label.toLowerCase() !== 'person'
-                );
-
-                drawDetections(ctx, filteredDetections);
-
-                // Calculate pseudo-FPS based on round trip
-                const duration = performance.now() - start;
-                setFps(Math.round(1000 / duration));
-
-                // Notify parent for TTS announcements (only non-person objects)
-                const uniqueLabels = [...new Set(filteredDetections.map(d => d.label))];
-                if (onDetect && uniqueLabels.length > 0) {
-                    onDetect(uniqueLabels);
-                }
-            }
-        } catch (err) {
-            console.error("Vision Inference Error:", err);
-        }
+        // Emit frame to server
+        socketRef.current.emit('detect_frame', { image: imageBase64, timestamp: Date.now() });
     };
 
     const drawDetections = (ctx, detections) => {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        if (!canvasRef.current) return;
 
-        // Semi-transparent overlay for "HUD" look
-        // ctx.fillStyle = 'rgba(0, 20, 0, 0.1)';
-        // ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        // Match canvas size to video if needed
+        if (canvasRef.current.width !== videoRef.current.videoWidth) {
+            canvasRef.current.width = videoRef.current.videoWidth;
+            canvasRef.current.height = videoRef.current.videoHeight;
+        }
+
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
         detections.forEach(det => {
             const [x1, y1, x2, y2] = det.bbox;
@@ -132,10 +145,13 @@ const VisionHUD = ({ onClose, onDetect }) => {
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(x1, y1 - 25, ctx.measureText(det.label).width + 20, 25);
 
+            // Show ID if available
+            const labelText = det.id !== -1 ? `${det.label} #${det.id}` : det.label;
+
             // Label Text
             ctx.fillStyle = '#00f3ff';
             ctx.font = '14px Orbitron, sans-serif';
-            ctx.fillText(`${det.label} ${(det.confidence * 100).toFixed(0)}%`, x1 + 5, y1 - 8);
+            ctx.fillText(`${labelText} ${(det.confidence * 100).toFixed(0)}%`, x1 + 5, y1 - 8);
         });
     };
 
