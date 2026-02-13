@@ -128,7 +128,10 @@ const VisionHUD = ({ onClose, onDetect }) => {
             const height = y2 - y1;
 
             // Draw Box
-            ctx.strokeStyle = '#00f3ff';
+            const isFace = det.label === 'face';
+            const color = isFace ? '#ffd700' : '#00f3ff';
+
+            ctx.strokeStyle = color;
             ctx.lineWidth = 2;
             ctx.strokeRect(x1, y1, width, height);
 
@@ -149,7 +152,7 @@ const VisionHUD = ({ onClose, onDetect }) => {
             const labelText = det.id !== -1 ? `${det.label} #${det.id}` : det.label;
 
             // Label Text
-            ctx.fillStyle = '#00f3ff';
+            ctx.fillStyle = color;
             ctx.font = '14px Orbitron, sans-serif';
             ctx.fillText(`${labelText} ${(det.confidence * 100).toFixed(0)}%`, x1 + 5, y1 - 8);
         });
