@@ -36,9 +36,15 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
 
+@socketio.on('set_mode')
+def handle_mode_switch(mode):
+    global current_mode
+    current_mode = mode
+    print(f"Switched to mode: {mode}")
+
 @socketio.on('detect_frame')
 def handle_frame(data):
-    global frame_count
+    global frame_count, current_mode
     try:
         if 'image' not in data:
             return
@@ -55,80 +61,86 @@ def handle_frame(data):
         detections = []
         frame_count += 1
 
-        # --- 1. YOLO Object Detection (Disabled due to compatibility issues) ---
-        # try:
-        #     results = model.track(img, persist=True, verbose=False)
-        #     for r in results:
-        #         boxes = r.boxes
-        #         for box in boxes:
-        #             x1, y1, x2, y2 = box.xyxy[0].tolist()
-        #             conf = float(box.conf[0])
-        #             cls = int(box.cls[0])
-        #             label = model.names[cls]
-        #             track_id = int(box.id[0]) if box.id is not None else -1
-        #             if label != 'person':
-        #                 detections.append({
-        #                     "bbox": [int(x1), int(y1), int(x2), int(y2)],
-        #                     "confidence": conf,
-        #                     "label": label,
-        #                     "id": track_id,
-        #                     "type": "object"
-        #                 })
-        # except Exception as e:
-        #     print(f"YOLO Error: {e}")
-
-        # --- 2. OpenCV Face Detection (Haar Cascade) ---
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5) # Tuned parameters
-
-        for i, (x, y, w, h) in enumerate(faces):
-            x1, y1 = int(x), int(y)
-            x2, y2 = int(x + w), int(y + h)
-            
-            # Ensure crop coordinates are within image bounds
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(width, x2)
-            y2 = min(height, y2)
-
-            face_id = int(i + 100) # Simple temporary ID
-            name = "Unknown"
-            
-            # Run Recognition every 5 frames (approx 0.2 seconds - much faster with SFace)
-            if frame_count % 5 == 0:
-                try:
-                    # Crop face
-                    face_img = img[y1:y2, x1:x2]
-                    if face_img.size > 0 and face_img.shape[0] > 10 and face_img.shape[1] > 10:
-                        # Search in DB using SFace (Result is much faster)
-                        dfs = DeepFace.find(img_path=face_img, 
-                                          db_path="known_faces", 
-                                          model_name="SFace", 
-                                          detector_backend="opencv",
-                                          enforce_detection=False,
-                                          threshold=0.6, # Slightly higher threshold for SFace
-                                          silent=True)
+        # --- MODE 1: OBJECT DETECTION (YOLO) ---
+        if current_mode == 'object':
+            try:
+                # Use standard predict (more stable than track for now)
+                results = model(img, verbose=False)
+                
+                for r in results:
+                    boxes = r.boxes
+                    for box in boxes:
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+                        conf = float(box.conf[0])
+                        cls = int(box.cls[0])
+                        label = model.names[cls]
                         
-                        if len(dfs) > 0 and not dfs[0].empty:
-                            full_path = dfs[0].iloc[0]['identity']
-                            filename = os.path.basename(full_path)
-                            name = os.path.splitext(filename)[0]
-                            face_id_cache[face_id] = name
-                except Exception as e:
-                    print(f"Recognition Error: {e}")
-            
-            # Use cached name if available
-            if face_id in face_id_cache:
-                name = face_id_cache[face_id]
+                        # Only show high confidence objects
+                        if conf > 0.4:
+                            detections.append({
+                                "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                                "confidence": conf,
+                                "label": label,
+                                "id": -1, 
+                                "type": "object"
+                            })
+            except Exception as e:
+                print(f"YOLO Error: {e}") 
+                pass
 
-            detections.append({
-                "bbox": [x1, y1, x2, y2],
-                "confidence": 0.9, # Haar doesn't give confidence, assume high if detected
-                "label": "face",
-                "name": name,
-                "id": face_id,
-                "type": "face"
-            })
+        # --- MODE 2: IDENTITY RECOGNITION (Face) ---
+        elif current_mode == 'face':
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, 1.3, 5) # Tuned parameters
+
+            for i, (x, y, w, h) in enumerate(faces):
+                x1, y1 = int(x), int(y)
+                x2, y2 = int(x + w), int(y + h)
+                
+                # Ensure crop coordinates are within image bounds
+                x1 = max(0, x1)
+                y1 = max(0, y1)
+                x2 = min(width, x2)
+                y2 = min(height, y2)
+
+                face_id = int(i + 100) # Simple temporary ID
+                name = "Unknown"
+                
+                # Run Recognition every 5 frames (approx 0.2 seconds - much faster with SFace)
+                if frame_count % 5 == 0:
+                    try:
+                        # Crop face
+                        face_img = img[y1:y2, x1:x2]
+                        if face_img.size > 0 and face_img.shape[0] > 10 and face_img.shape[1] > 10:
+                            # Search in DB using SFace (Result is much faster)
+                            dfs = DeepFace.find(img_path=face_img, 
+                                            db_path="known_faces", 
+                                            model_name="SFace", 
+                                            detector_backend="opencv",
+                                            enforce_detection=False,
+                                            threshold=0.6, # Slightly higher threshold for SFace
+                                            silent=True)
+                            
+                            if len(dfs) > 0 and not dfs[0].empty:
+                                full_path = dfs[0].iloc[0]['identity']
+                                filename = os.path.basename(full_path)
+                                name = os.path.splitext(filename)[0]
+                                face_id_cache[face_id] = name
+                    except Exception as e:
+                        print(f"Recognition Error: {e}")
+                
+                # Use cached name if available
+                if face_id in face_id_cache:
+                    name = face_id_cache[face_id]
+
+                detections.append({
+                    "bbox": [x1, y1, x2, y2],
+                    "confidence": 0.9, # Haar doesn't give confidence, assume high if detected
+                    "label": "face",
+                    "name": name,
+                    "id": face_id,
+                    "type": "face"
+                })
         
         emit('detection_result', {"detections": detections})
 

@@ -7,10 +7,11 @@ const VisionHUD = ({ onClose, onDetect }) => {
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const [isStreaming, setIsStreaming] = useState(false);
+    const [scanMode, setScanMode] = useState('face'); // 'face' or 'object'
+    const [fps, setFps] = useState(0);
     const [isRegistering, setIsRegistering] = useState(false);
     const [registerName, setRegisterName] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [fps, setFps] = useState(0);
     const streamRef = useRef(null);
     const socketRef = useRef(null);
 
@@ -55,6 +56,8 @@ const VisionHUD = ({ onClose, onDetect }) => {
 
         socketRef.current.on('connect', () => {
             console.log("Connected to Vision Server via Socket.IO");
+            // Set initial mode
+            socketRef.current.emit('set_mode', 'face');
         });
 
         socketRef.current.on('detection_result', (data) => {
@@ -91,6 +94,13 @@ const VisionHUD = ({ onClose, onDetect }) => {
             if (socketRef.current) socketRef.current.disconnect();
         };
     }, []);
+
+    // Effect to switch mode on server
+    useEffect(() => {
+        if (socketRef.current && socketRef.current.connected) {
+            socketRef.current.emit('set_mode', scanMode);
+        }
+    }, [scanMode]);
 
     useEffect(() => {
         let interval;
@@ -132,6 +142,7 @@ const VisionHUD = ({ onClose, onDetect }) => {
 
         // Ensure video is ready
         if (video.readyState !== 4) return;
+        if (video.videoWidth === 0 || video.videoHeight === 0) return;
 
         // Draw current frame to offscreen canvas
         const offscreen = document.createElement('canvas');
@@ -164,6 +175,8 @@ const VisionHUD = ({ onClose, onDetect }) => {
         // Calculate scaling factors (Backend coordinates -> Frontend display size)
         const scaleX = video.clientWidth / video.videoWidth;
         const scaleY = video.clientHeight / video.videoHeight;
+
+        if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) return;
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -257,7 +270,7 @@ const VisionHUD = ({ onClose, onDetect }) => {
                 <div className="absolute top-4 left-4 flex gap-4">
                     <div className="bg-black/50 px-3 py-1 border border-cyan-500/50 rounded text-cyan-400 font-mono text-xs flex items-center gap-2">
                         <Activity size={14} className="animate-pulse" />
-                        VISION_CORE: ONLINE
+                        {scanMode === 'face' ? 'IDENTITY_CORE' : 'OBJECT_CORE'}: ONLINE
                     </div>
                     <div className="bg-black/50 px-3 py-1 border border-cyan-500/50 rounded text-cyan-400 font-mono text-xs">
                         LATENCY: {fps}ms
@@ -274,18 +287,40 @@ const VisionHUD = ({ onClose, onDetect }) => {
             <div className="flex gap-4 mt-6">
                 <button
                     onClick={() => setIsRegistering(true)}
-                    className="px-8 py-3 bg-cyan-500/20 border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/30 hover:text-cyan-200 transition-all rounded font-orbitron tracking-widest flex items-center gap-2"
+                    className="px-6 py-3 bg-cyan-500/10 border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/30 transition-all rounded font-orbitron tracking-widest flex items-center gap-2 text-sm"
                 >
-                    <Activity size={18} />
-                    SCAN IDENTITY
+                    <Activity size={16} />
+                    REGISTER ID
                 </button>
+
+                <div className="flex bg-black/50 border border-cyan-500/30 rounded overflow-hidden">
+                    <button
+                        onClick={() => setScanMode('face')}
+                        className={`px-6 py-3 transition-colors font-orbitron text-sm ${scanMode === 'face'
+                            ? 'bg-cyan-500/40 text-cyan-100'
+                            : 'text-cyan-500/50 hover:text-cyan-400'
+                            }`}
+                    >
+                        IDENTITY
+                    </button>
+                    <div className="w-[1px] bg-cyan-500/30"></div>
+                    <button
+                        onClick={() => setScanMode('object')}
+                        className={`px-6 py-3 transition-colors font-orbitron text-sm ${scanMode === 'object'
+                            ? 'bg-cyan-500/40 text-cyan-100'
+                            : 'text-cyan-500/50 hover:text-cyan-400'
+                            }`}
+                    >
+                        OBJECTS
+                    </button>
+                </div>
 
                 <button
                     onClick={onClose}
-                    className="px-8 py-3 bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 hover:text-red-200 transition-all rounded font-orbitron tracking-widest flex items-center gap-2"
+                    className="px-6 py-3 bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition-all rounded font-orbitron tracking-widest flex items-center gap-2 text-sm"
                 >
-                    <X size={18} />
-                    TERMINATE LINK
+                    <X size={16} />
+                    EXIT
                 </button>
             </div>
 
