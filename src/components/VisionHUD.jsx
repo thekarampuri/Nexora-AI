@@ -147,18 +147,35 @@ const VisionHUD = ({ onClose, onDetect }) => {
     };
 
     const drawDetections = (ctx, detections) => {
-        if (!canvasRef.current) return;
+        if (!canvasRef.current || !videoRef.current) return;
 
-        // Match canvas size to video if needed
-        if (canvasRef.current.width !== videoRef.current.videoWidth) {
-            canvasRef.current.width = videoRef.current.videoWidth;
-            canvasRef.current.height = videoRef.current.videoHeight;
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+
+        // Ensure we have valid video dimensions
+        if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+        // Match canvas resolution to the displayed video size
+        if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+            canvas.width = video.clientWidth;
+            canvas.height = video.clientHeight;
         }
 
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        // Calculate scaling factors (Backend coordinates -> Frontend display size)
+        const scaleX = video.clientWidth / video.videoWidth;
+        const scaleY = video.clientHeight / video.videoHeight;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         detections.forEach(det => {
-            const [x1, y1, x2, y2] = det.bbox;
+            let [bx1, by1, bx2, by2] = det.bbox;
+
+            // Apply scaling
+            const x1 = bx1 * scaleX;
+            const y1 = by1 * scaleY;
+            const x2 = bx2 * scaleX;
+            const y2 = by2 * scaleY;
+
             const width = x2 - x1;
             const height = y2 - y1;
 

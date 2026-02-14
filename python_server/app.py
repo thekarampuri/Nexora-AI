@@ -55,50 +55,58 @@ def handle_frame(data):
         detections = []
         frame_count += 1
 
-        # --- 1. YOLO Object Detection ---
-        results = model.track(img, persist=True, verbose=False)
-        
-        for r in results:
-            boxes = r.boxes
-            for box in boxes:
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-                conf = float(box.conf[0])
-                cls = int(box.cls[0])
-                label = model.names[cls]
-                track_id = int(box.id[0]) if box.id is not None else -1
-
-                if label != 'person':
-                    detections.append({
-                        "bbox": [x1, y1, x2, y2],
-                        "confidence": conf,
-                        "label": label,
-                        "id": track_id,
-                        "type": "object"
-                    })
+        # --- 1. YOLO Object Detection (Disabled due to compatibility issues) ---
+        # try:
+        #     results = model.track(img, persist=True, verbose=False)
+        #     for r in results:
+        #         boxes = r.boxes
+        #         for box in boxes:
+        #             x1, y1, x2, y2 = box.xyxy[0].tolist()
+        #             conf = float(box.conf[0])
+        #             cls = int(box.cls[0])
+        #             label = model.names[cls]
+        #             track_id = int(box.id[0]) if box.id is not None else -1
+        #             if label != 'person':
+        #                 detections.append({
+        #                     "bbox": [int(x1), int(y1), int(x2), int(y2)],
+        #                     "confidence": conf,
+        #                     "label": label,
+        #                     "id": track_id,
+        #                     "type": "object"
+        #                 })
+        # except Exception as e:
+        #     print(f"YOLO Error: {e}")
 
         # --- 2. OpenCV Face Detection (Haar Cascade) ---
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, 1.3, 5) # Tuned parameters
 
         for i, (x, y, w, h) in enumerate(faces):
-            x1, y1 = x, y
-            x2, y2 = x + w, y + h
+            x1, y1 = int(x), int(y)
+            x2, y2 = int(x + w), int(y + h)
             
-            face_id = i + 100 # Simple temporary ID
+            # Ensure crop coordinates are within image bounds
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(width, x2)
+            y2 = min(height, y2)
+
+            face_id = int(i + 100) # Simple temporary ID
             name = "Unknown"
             
-            # Run Recognition every 30 frames (approx 1-2 seconds)
-            if frame_count % 30 == 0:
+            # Run Recognition every 5 frames (approx 0.2 seconds - much faster with SFace)
+            if frame_count % 5 == 0:
                 try:
                     # Crop face
                     face_img = img[y1:y2, x1:x2]
-                    if face_img.size > 0:
-                        # Search in DB
+                    if face_img.size > 0 and face_img.shape[0] > 10 and face_img.shape[1] > 10:
+                        # Search in DB using SFace (Result is much faster)
                         dfs = DeepFace.find(img_path=face_img, 
                                           db_path="known_faces", 
-                                          model_name="VGG-Face", 
+                                          model_name="SFace", 
                                           detector_backend="opencv",
                                           enforce_detection=False,
+                                          threshold=0.6, # Slightly higher threshold for SFace
                                           silent=True)
                         
                         if len(dfs) > 0 and not dfs[0].empty:
@@ -121,7 +129,7 @@ def handle_frame(data):
                 "id": face_id,
                 "type": "face"
             })
-
+        
         emit('detection_result', {"detections": detections})
 
     except Exception as e:
