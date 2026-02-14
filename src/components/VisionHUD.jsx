@@ -14,6 +14,7 @@ const VisionHUD = ({ onClose, onDetect }) => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const streamRef = useRef(null);
     const socketRef = useRef(null);
+    const scanModeRef = useRef('face');
 
     const handleRegister = async () => {
         if (!videoRef.current || !registerName) return;
@@ -56,8 +57,8 @@ const VisionHUD = ({ onClose, onDetect }) => {
 
         socketRef.current.on('connect', () => {
             console.log("Connected to Vision Server via Socket.IO");
-            // Set initial mode
-            socketRef.current.emit('set_mode', 'face');
+            // Set initial mode from ref
+            socketRef.current.emit('set_mode', scanModeRef.current);
         });
 
         socketRef.current.on('detection_result', (data) => {
@@ -97,6 +98,7 @@ const VisionHUD = ({ onClose, onDetect }) => {
 
     // Effect to switch mode on server
     useEffect(() => {
+        scanModeRef.current = scanMode;
         if (socketRef.current && socketRef.current.connected) {
             socketRef.current.emit('set_mode', scanMode);
         }

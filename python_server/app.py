@@ -61,6 +61,10 @@ def handle_frame(data):
         detections = []
         frame_count += 1
 
+        # Debug current mode every 30 frames
+        if frame_count % 30 == 0:
+            print(f"Current Mode: {current_mode}")
+
         # --- MODE 1: OBJECT DETECTION (YOLO) ---
         if current_mode == 'object':
             try:
@@ -76,7 +80,7 @@ def handle_frame(data):
                         label = model.names[cls]
                         
                         # Only show high confidence objects
-                        if conf > 0.4:
+                        if conf > 0.25:
                             detections.append({
                                 "bbox": [int(x1), int(y1), int(x2), int(y2)],
                                 "confidence": conf,
