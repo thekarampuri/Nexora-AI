@@ -44,12 +44,13 @@ echo [VISION] Python Server will run on: http://localhost:5001
 echo [AI]     Node Backend will run on:  http://localhost:5000
 echo [UI]     Frontend will run on:      http://localhost:5173
 echo.
-echo Opening browser in 8 seconds...
+echo Opening browser in 5 seconds...
 echo.
 
+:: Launch Browser in background
+start /b cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:5173"
+
 :: Use concurrently to run all servers in one window
-:: The --names flag adds colored prefixes to each service
-:: The --kill-others flag stops all if one crashes
 call npm start
 
 echo.
