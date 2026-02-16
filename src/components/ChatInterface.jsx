@@ -5,6 +5,10 @@ import { Send, Mic, MicOff, Volume2, VolumeX, Camera as CameraIcon } from 'lucid
 import VisionHUD from './VisionHUD';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
+import { parseCommand } from '../utils/commandParser';
+import WeatherWidget from './features/WeatherWidget';
+import NewsFeed from './features/NewsFeed';
+import DigitalClock from './features/DigitalClock';
 
 const ChatInterface = () => {
     const { addLog, toggleDevice, devices, user } = useApp();
@@ -16,6 +20,9 @@ const ChatInterface = () => {
     const [isSttSupported, setIsSttSupported] = useState(true);
     const [sttStatus, setSttStatus] = useState('READY'); // READY, LISTENING, ERROR, UNSUPPORTED
     const [isVisionMode, setIsVisionMode] = useState(false);
+    const [showWeather, setShowWeather] = useState(false);
+    const [showNews, setShowNews] = useState(false);
+    const [showClock, setShowClock] = useState(false);
     const [lastAnnouncedLabels, setLastAnnouncedLabels] = useState([]);
     const inputRef = useRef(null);
     const messagesEndRef = useRef(null);
@@ -23,6 +30,8 @@ const ChatInterface = () => {
     const transcriptRef = useRef(''); // Use ref for stable transcript storage
     const restartTimeoutRef = useRef(null);
     const isListeningRef = useRef(false); // Ref to avoid stale closures in event handlers
+    const isActiveModeRef = useRef(false); // Ref to track if we are actively waiting for a command
+    const silenceTimeoutRef = useRef(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -33,8 +42,6 @@ const ChatInterface = () => {
     }, [messages, isProcessing]);
 
     useEffect(() => {
-        inputRef.current?.focus();
-
         // 1. Check Security Context
         const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
@@ -44,144 +51,161 @@ const ChatInterface = () => {
             console.warn("Speech Recognition not supported in this browser.");
             setIsSttSupported(false);
             setSttStatus('UNSUPPORTED');
+            return;
         } else if (!isSecure) {
-            console.warn("Speech Recognition requires a secure context (HTTPS or localhost).");
+            console.warn("Speech Recognition requires a secure context.");
             setIsSttSupported(false);
             setSttStatus('INSECURE_CONTEXT');
-        } else {
-            recognitionRef.current = new SpeechRecognition();
-            recognitionRef.current.continuous = true;
-            recognitionRef.current.interimResults = true;
-            recognitionRef.current.lang = 'en-US';
-
-            recognitionRef.current.onresult = (event) => {
-                let interimTranscript = '';
-                let finalTranscriptChunk = '';
-
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    if (event.results[i].isFinal) {
-                        finalTranscriptChunk += event.results[i][0].transcript;
-                    } else {
-                        interimTranscript += event.results[i][0].transcript;
-                    }
-                }
-
-                if (finalTranscriptChunk) {
-                    transcriptRef.current += finalTranscriptChunk;
-                }
-
-                const currentText = transcriptRef.current + interimTranscript;
-                console.log("STT_RESULT:", currentText); // Diagnostic log
-                if (currentText) {
-                    setInput(currentText);
-                }
-            };
-
-            recognitionRef.current.onerror = (event) => {
-                // Network and no-speech errors are normal during continuous recognition
-                // They trigger auto-restart, so we don't need to log them as errors
-                if (event.error === 'network' || event.error === 'no-speech') {
-                    // Silent handling - these are expected during continuous mode
-                    return;
-                }
-
-                // Log actual errors
-                console.error("Speech Recognition Error:", event.error);
-                setSttStatus('ERROR');
-                addLog(`STT_ERROR: ${event.error}`);
-
-                if (event.error === 'not-allowed') {
-                    setIsListening(false);
-                    isListeningRef.current = false;
-                    alert("Microphone access denied. Please enable it in browser settings.");
-                } else if (event.error === 'aborted') {
-                    // User stopped it, this is normal
-                    setIsListening(false);
-                    isListeningRef.current = false;
-                } else {
-                    // Other errors - stop listening
-                    setIsListening(false);
-                    isListeningRef.current = false;
-                }
-            };
-
-            recognitionRef.current.onend = () => {
-                if (isListeningRef.current) {
-                    // Silently restart - this is normal continuous mode behavior
-                    if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
-                    restartTimeoutRef.current = setTimeout(() => {
-                        if (isListeningRef.current) {
-                            try {
-                                recognitionRef.current.start();
-                                // Silently restarted - no console spam
-                            } catch (err) {
-                                console.error("STT_SESSION: Failed to restart", err);
-                                setIsListening(false);
-                                isListeningRef.current = false;
-                                setSttStatus('READY');
-                            }
-                        }
-                    }, 100);
-                } else {
-                    setSttStatus('READY');
-                }
-            };
+            return;
         }
 
-        // Cleanup on unmount
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = true;
+        recognitionRef.current.lang = 'en-US';
+
+        const startSilenceTimer = () => {
+            if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+            silenceTimeoutRef.current = setTimeout(() => {
+                if (isActiveModeRef.current) {
+                    console.log("STT: Silence timeout - reverting to passive mode");
+                    isActiveModeRef.current = false;
+                    setInput('');
+                    speakResponse("I didn't hear anything.");
+                }
+            }, 6000); // 6 seconds silence timeout
+        };
+
+        recognitionRef.current.onresult = (event) => {
+            // Reset silence timer on any speech
+            if (isActiveModeRef.current) startSilenceTimer();
+
+            let interimTranscript = '';
+            let finalTranscriptChunk = '';
+
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscriptChunk += event.results[i][0].transcript;
+                } else {
+                    interimTranscript += event.results[i][0].transcript;
+                }
+            }
+
+            const lowerCaseChunk = finalTranscriptChunk.toLowerCase();
+            const lowerCaseInterim = interimTranscript.toLowerCase();
+
+            // 1. WAKE WORD DETECTION (Always Check)
+            if (lowerCaseChunk.includes("hey nexora") || lowerCaseInterim.includes("hey nexora")) {
+                isActiveModeRef.current = true;
+                transcriptRef.current = ''; // Reset buffer
+                setInput("Listening for command...");
+                startSilenceTimer(); // Start counting down silence
+                return;
+            }
+
+            // 2. COMMAND EXECUTION (Only if Active)
+            if (isActiveModeRef.current) {
+                setInput(interimTranscript || finalTranscriptChunk);
+
+                if (finalTranscriptChunk.trim().length > 0) {
+                    // Command Received!
+                    const commandText = finalTranscriptChunk.replace(/hey nexora/gi, '').trim();
+                    if (commandText) {
+                        if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current); // Stop silence timer
+                        processCommand(commandText);
+                        isActiveModeRef.current = false; // Return to passive mode
+                        transcriptRef.current = '';
+                    }
+                }
+            }
+        };
+
+        recognitionRef.current.onerror = (event) => {
+            if (event.error === 'network' || event.error === 'no-speech') {
+                return; // Ignore common errors
+            }
+            console.error("Speech Recognition Error:", event.error);
+            setSttStatus('ERROR');
+            if (event.error === 'not-allowed') {
+                setIsListening(false);
+                isListeningRef.current = false;
+            }
+        };
+
+        recognitionRef.current.onend = () => {
+            // AUTO-RESTART for "Always On" feel
+            if (isListeningRef.current) {
+                if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+                restartTimeoutRef.current = setTimeout(() => {
+                    if (isListeningRef.current && recognitionRef.current) {
+                        try {
+                            recognitionRef.current.start();
+                            console.log("STT: Resumed listening...");
+                        } catch (e) {
+                            console.log("STT: Restart failed", e);
+                        }
+                    }
+                }, 200);
+            } else {
+                setSttStatus('READY');
+                if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+            }
+        };
+
         return () => {
-            if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
-            if (recognitionRef.current) {
-                // Ensure recognition stops completely
-                recognitionRef.current.onend = null;
-                recognitionRef.current.stop();
-            }
-            if (window.speechSynthesis) {
-                window.speechSynthesis.cancel();
-            }
+            isListeningRef.current = false;
+            if (recognitionRef.current) recognitionRef.current.stop();
+            if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
         };
     }, []);
 
     const toggleListening = () => {
-        if (!isSttSupported) {
-            alert("Speech recognition is not supported in your browser. Please use Chrome or Edge.");
-            return;
-        }
+        if (!isSttSupported) return;
 
         if (isListeningRef.current) {
-            // Stopping - submit the transcription
+            // STOP EVERYTHING
             isListeningRef.current = false;
+            isActiveModeRef.current = false;
+            if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
             setIsListening(false);
             recognitionRef.current?.stop();
             setSttStatus('READY');
-
-            // Auto-submit after a short delay to ensure final transcript is captured
-            setTimeout(() => {
-                const finalText = input.trim();
-                if (finalText) {
-                    processCommand(finalText);
-                    setInput(''); // Clear input after submission
-                }
-            }, 300);
+            addLog("STT: Microphone Deactivated");
         } else {
-            // Starting - begin listening
+            // START LISTENING (Active Mode)
             try {
-                setInput('');
-                transcriptRef.current = ''; // Reset transcript ref
-                window.speechSynthesis.cancel();
+                transcriptRef.current = '';
                 recognitionRef.current?.start();
-                isListeningRef.current = true;
+
+                isListeningRef.current = true; // Enable the loop
+                isActiveModeRef.current = true; // Enable command processing immediately
+
+                // Start silence timer since we are active
+                if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+                silenceTimeoutRef.current = setTimeout(() => {
+                    if (isActiveModeRef.current) {
+                        console.log("STT: Silence timeout - reverting to passive mode");
+                        isActiveModeRef.current = false;
+                        setInput('');
+                        speakResponse("I didn't hear anything.");
+                    }
+                }, 6000);
+
+
+
                 setIsListening(true);
                 setSttStatus('LISTENING');
-                addLog("STT_SESSION: Voice input active");
+                addLog("STT: Microphone Activated");
+                speakResponse("Ready.");
             } catch (err) {
-                console.error("Failed to start recognition:", err);
-                isListeningRef.current = false;
-                setIsListening(false);
-                setSttStatus('ERROR');
+                console.error("Failed to start:", err);
+                // If already started, just sync state
+                isListeningRef.current = true;
+                setIsListening(true);
             }
         }
     };
+
 
     const toggleMute = () => {
         const nextMuted = !isMuted;
@@ -226,18 +250,79 @@ const ChatInterface = () => {
         let action = "";
 
         // 1. LOCAL COMMAND HANDLERS
-        if (/^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
+        const command = parseCommand(cmd);
+
+        if (command) {
+            console.log("COMMAND DETECTED:", command);
+
+            if (command.type === 'ui') {
+                if (command.component === 'weather') { setShowWeather(true); reply = "Displaying atmospheric data."; }
+                if (command.component === 'news') { setShowNews(true); reply = "Accessing global news feed."; }
+                if (command.component === 'clock') { setShowClock(true); reply = "Synchronizing time."; }
+                action = `UI: Show ${command.component}`;
+            }
+
+            else if (command.type === 'system') {
+                try {
+                    const res = await fetch('/api/system/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: command.action })
+                    });
+                    const data = await res.json();
+
+                    if (command.action === 'battery') {
+                        reply = data.error ? "Battery data unavailable." :
+                            `Battery is at ${data.percent}%. Status: ${data.status}.`;
+                    } else {
+                        reply = `System ${command.action} executed.`;
+                    }
+                    action = `System: ${command.action}`;
+                } catch (e) {
+                    reply = "Failed to access system controls.";
+                }
+            }
+
+            else if (command.type === 'media') {
+                try {
+                    fetch('/api/system/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: command.action })
+                    });
+                    reply = `Media ${command.action} executed.`;
+                    action = `Media: ${command.action}`;
+                } catch (e) { }
+            }
+
+            else if (command.type === 'web') {
+                try {
+                    fetch('/api/web/open', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: command.url })
+                    });
+                    reply = `Opening ${command.url}...`;
+                    action = `Web: ${command.url}`;
+                } catch (e) { }
+            }
+
+            else if (command.type === 'app') {
+                try {
+                    fetch('/api/app/launch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ app_name: command.app_name })
+                    });
+                    reply = `Launching ${command.app_name}...`;
+                    action = `App: ${command.app_name}`;
+                } catch (e) { }
+            }
+        }
+
+        else if (/^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
             reply = `GOOD_SESSION, ${user?.username || 'ADMIN'}. NEXORA_STATUS: CALIBRATED.`;
             action = "Local: Greeting";
-        }
-        else if (/\b(system time|current date)\b/i.test(lowerCmd)) {
-            reply = `SYSTEM_TIME: ${new Date().toLocaleString()}`;
-            action = "Local: Time check";
-        }
-        else if (/\b(open google|search google)\b/i.test(lowerCmd)) {
-            reply = "REDIRECT: Initializing Google Search Grid...";
-            window.open('https://google.com', '_blank');
-            action = "Local: Opened Google";
         }
         else if (/^(?:turn|switch)\s+on\s+(?:the\s+)?(light|fan)/i.test(lowerCmd)) {
             if (lowerCmd.includes('light')) {
@@ -357,6 +442,9 @@ const ChatInterface = () => {
                         onDetect={handleVisionDetect}
                     />
                 )}
+                {showWeather && <WeatherWidget onClose={() => setShowWeather(false)} />}
+                {showNews && <NewsFeed onClose={() => setShowNews(false)} />}
+                {showClock && <DigitalClock onClose={() => setShowClock(false)} />}
             </AnimatePresence>
 
             {/* Scrollable Message Area */}
