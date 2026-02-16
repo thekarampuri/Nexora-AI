@@ -29,6 +29,15 @@ if not exist "node_modules\" (
     call npm install
 )
 
+echo [!] Verifying Python dependencies (this may take a moment)...
+pip install -r python_server\requirements.txt
+if %ERRORLEVEL% NEQ 0 (
+    echo [WARN] Failed to install Python dependencies.
+    pause
+) else (
+    echo [OK] Python dependencies verified.
+)
+
 if not exist "python_server\test_output\" (
     echo [!] Creating Python test directories...
     mkdir python_server\test_output 2>nul
