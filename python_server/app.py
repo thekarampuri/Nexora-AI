@@ -83,6 +83,46 @@ def get_news():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/automation/whatsapp', methods=['POST'])
+def whatsapp_automation():
+    try:
+        data = request.json
+        return jsonify(nura.whatsapp_automation(data.get('action'), data))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/automation/instagram', methods=['POST'])
+def instagram_automation():
+    try:
+        data = request.json
+        return jsonify(nura.instagram_automation(data.get('action')))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/automation/youtube', methods=['POST'])
+def youtube_automation():
+    try:
+        data = request.json
+        return jsonify(nura.youtube_automation(data.get('action'), data.get('query')))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/system/file', methods=['POST'])
+def file_automation():
+    try:
+        data = request.json
+        return jsonify(nura.file_operations(data.get('action'), data.get('path'), data.get('content')))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/automation/editor', methods=['POST'])
+def editor_automation():
+    try:
+        data = request.json
+        return jsonify(nura.text_editor_automation(data.get('action'), data.get('text')))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     print(f"🚀 NEXORA Vision Core Starting on port {port}")

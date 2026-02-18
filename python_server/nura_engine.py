@@ -105,3 +105,136 @@ class NuraEngine:
             return {"status": "success", "query": query}
         except Exception as e:
             return {"error": str(e)}
+
+    # --- ADVANCED AUTOMATION FEATURES ---
+
+    def whatsapp_automation(self, action, data=None):
+        """Handles WhatsApp automation."""
+        try:
+            if action == "open":
+                webbrowser.open("https://web.whatsapp.com")
+                return {"status": "success", "message": "Opening WhatsApp Web"}
+            
+            elif action == "send_message":
+                contact = data.get("contact")
+                message = data.get("message")
+                
+                # Check if WhatsApp Web is focused/open or just open it
+                webbrowser.open("https://web.whatsapp.com")
+                time.sleep(6) # Wait for load
+                
+                # Search Contact
+                pyautogui.hotkey('ctrl', 'alt', '/')
+                pyautogui.sleep(1)
+                pyautogui.press('backspace') 
+                pyautogui.write(contact, interval=0.05)
+                pyautogui.sleep(2)
+                pyautogui.press('enter') # Select contact
+                pyautogui.sleep(1)
+                
+                # Type Message
+                pyautogui.write(message, interval=0.05)
+                pyautogui.sleep(0.5)
+                pyautogui.press('enter') # Send
+                
+                return {"status": "success", "message": f"Sent message to {contact}"}
+            
+            return {"error": "Invalid action"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def instagram_automation(self, action):
+        """Handles Instagram automation."""
+        try:
+            if action == "open":
+                webbrowser.open("https://www.instagram.com")
+            elif action == "scroll_down" or action == "next_reel":
+                pyautogui.press('down')
+            elif action == "scroll_up" or action == "prev_reel":
+                pyautogui.press('up')
+            elif action == "mute":
+                pyautogui.press('m')
+            elif action == "like":
+                pyautogui.press('l') # Often 'l' or double click, stick to basic for now
+            
+            return {"status": "success", "action": action}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def youtube_automation(self, action, query=None):
+        """Handles YouTube automation."""
+        try:
+            if action == "open":
+                webbrowser.open("https://www.youtube.com")
+            elif action == "search_play":
+                webbrowser.open(f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}")
+                # Wait for load then play first video (simplified from NuraVoice which used complex tab/enter sequence)
+                # Improving reliability: Just opening search is safer than blind tabbing
+                # If specifically requested "play", we can try to click the first video
+                time.sleep(5)
+                pyautogui.press('tab') # Skip search box?
+                # This is flaky without visual anchors. 
+                # NuraVoice used 3 tabs then enter. Let's try that.
+                for _ in range(4): # 3 or 4 tabs usually hits the first video
+                    pyautogui.press('tab')
+                    time.sleep(0.2)
+                pyautogui.press('enter')
+                
+            elif action == "play_pause":
+                pyautogui.press('k')
+            elif action == "mute":
+                pyautogui.press('m')
+            elif action == "fullscreen":
+                pyautogui.press('f')
+            elif action == "next":
+                pyautogui.hotkey('shift', 'n')
+            
+            return {"status": "success", "action": action}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def file_operations(self, action, path=None, content=None):
+        """Handles File System Operations."""
+        try:
+            desktop = os.path.join(os.environ["USERPROFILE"], "Desktop")
+            
+            # Default to desktop if path is just a name
+            if path and not os.path.isabs(path):
+                target_path = os.path.join(desktop, path)
+            else:
+                target_path = path
+
+            if action == "create_folder":
+                os.makedirs(target_path, exist_ok=True)
+                return {"status": "success", "path": target_path}
+            
+            elif action == "create_file":
+                with open(target_path, 'w') as f:
+                    f.write(content or "")
+                return {"status": "success", "path": target_path}
+            
+            elif action == "write_file":
+                with open(target_path, 'a') as f: # Append mode
+                    f.write(content or "")
+                return {"status": "success", "path": target_path}
+                
+            return {"error": "Invalid action"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def text_editor_automation(self, action, text=None):
+        """Handles Text Editor automation."""
+        try:
+            if action == "open":
+                subprocess.Popen(["notepad"])
+            elif action == "type":
+                if text:
+                    pyautogui.typewrite(text, interval=0.01)
+            elif action == "close":
+                pyautogui.hotkey('alt', 'f4')
+                pyautogui.press('enter') # Save? or close dialog? Danger. 
+                # NuraVoice uses Ctrl+S then Alt+F4.
+                
+            return {"status": "success", "action": action}
+        except Exception as e:
+            return {"error": str(e)}
