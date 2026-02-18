@@ -10,6 +10,7 @@ export default defineConfig({
       '/api/app': 'http://localhost:5001',
       '/api/web': 'http://localhost:5001',
       '/api/news': 'http://localhost:5001',
+      '/api/automation': 'http://localhost:5001',
       '/api': 'http://localhost:5000',
       '/socket.io': {
         target: 'http://localhost:5001',

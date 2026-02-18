@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { split } from 'postcss/lib/list';
 import { useApp } from '../context/AppContext';
-import { Send, Mic, MicOff, Volume2, VolumeX, Camera as CameraIcon, Copy, Edit, Check } from 'lucide-react';
+import { Send, Mic, MicOff, Volume2, VolumeX, Camera as CameraIcon, Copy, Edit, Check, Square } from 'lucide-react';
 import VisionHUD from './VisionHUD';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
@@ -33,6 +33,7 @@ const ChatInterface = () => {
     const isListeningRef = useRef(false); // Ref to avoid stale closures in event handlers
     const isActiveModeRef = useRef(false); // Ref to track if we are actively waiting for a command
     const silenceTimeoutRef = useRef(null);
+    const abortControllerRef = useRef(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -47,6 +48,15 @@ const ChatInterface = () => {
     const handleEdit = (text) => {
         setInput(text);
         inputRef.current?.focus();
+    };
+
+    const handleStop = () => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+            setIsProcessing(false);
+            addLog("System: User aborted request.");
+        }
     };
 
     useEffect(() => {
@@ -256,6 +266,13 @@ const ChatInterface = () => {
         const lowerCmd = cmd.toLowerCase();
         setIsProcessing(true);
 
+        // Create new abort controller
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortController();
+        const signal = abortControllerRef.current.signal;
+
         // Add user message to history
         const userMsg = { role: 'user', content: cmd, id: Date.now() };
         setMessages(prev => [...prev, userMsg]);
@@ -263,25 +280,26 @@ const ChatInterface = () => {
         let reply = "";
         let action = "";
 
-        // 1. LOCAL COMMAND HANDLERS
-        const command = parseCommand(cmd);
+        try {
+            // 1. LOCAL COMMAND HANDLERS
+            const command = parseCommand(cmd);
 
-        if (command) {
-            console.log("COMMAND DETECTED:", command);
+            if (command) {
+                console.log("COMMAND DETECTED:", command);
 
-            if (command.type === 'ui') {
-                if (command.component === 'weather') { setShowWeather(true); reply = "Displaying atmospheric data."; }
-                if (command.component === 'news') { setShowNews(true); reply = "Accessing global news feed."; }
-                if (command.component === 'clock') { setShowClock(true); reply = "Synchronizing time."; }
-                action = `UI: Show ${command.component}`;
-            }
+                if (command.type === 'ui') {
+                    if (command.component === 'weather') { setShowWeather(true); reply = "Displaying atmospheric data."; }
+                    if (command.component === 'news') { setShowNews(true); reply = "Accessing global news feed."; }
+                    if (command.component === 'clock') { setShowClock(true); reply = "Synchronizing time."; }
+                    action = `UI: Show ${command.component}`;
+                }
 
-            else if (command.type === 'system') {
-                try {
+                else if (command.type === 'system') {
                     const res = await fetch('/api/system/command', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: command.action })
+                        body: JSON.stringify({ action: command.action }),
+                        signal
                     });
                     const data = await res.json();
 
@@ -292,127 +310,122 @@ const ChatInterface = () => {
                         reply = `System ${command.action} executed.`;
                     }
                     action = `System: ${command.action}`;
-                } catch (e) {
-                    reply = "Failed to access system controls.";
                 }
-            }
 
-            else if (command.type === 'media') {
-                try {
-                    fetch('/api/system/command', {
+                else if (command.type === 'media') {
+                    await fetch('/api/system/command', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: command.action })
+                        body: JSON.stringify({ action: command.action }),
+                        signal
                     });
                     reply = `Media ${command.action} executed.`;
                     action = `Media: ${command.action}`;
-                } catch (e) { }
-            }
+                }
 
-            else if (command.type === 'web') {
-                try {
-                    fetch('/api/web/open', {
+                else if (command.type === 'web') {
+                    await fetch('/api/web/open', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: command.url })
+                        body: JSON.stringify({ url: command.url }),
+                        signal
                     });
                     reply = `Opening ${command.url}...`;
                     action = `Web: ${command.url}`;
-                } catch (e) { }
-            }
+                }
 
-            else if (command.type === 'app') {
-                try {
-                    fetch('/api/app/launch', {
+                else if (command.type === 'app') {
+                    await fetch('/api/app/launch', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ app_name: command.app_name })
+                        body: JSON.stringify({ app_name: command.app_name }),
+                        signal
                     });
                     reply = `Launching ${command.app_name}...`;
                     action = `App: ${command.app_name}`;
-                } catch (e) { }
-            }
-
-            else if (command.type === 'automation') {
-                try {
-                    let endpoint = `/api/automation/${command.service}`;
-                    let body = { action: command.action };
-                    if (command.service === 'whatsapp') { body.contact = command.contact; body.message = command.message; }
-                    if (command.service === 'youtube') { body.query = command.query; }
-
-                    fetch(endpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body)
-                    });
-                    reply = `Executing ${command.service} automation: ${command.action}`;
-                    action = `Auto: ${command.service}`;
-                } catch (e) {
-                    reply = `Failed to execute ${command.service} command.`;
                 }
-            }
 
-            else if (command.type === 'file') {
-                try {
-                    fetch('/api/system/file', {
+                else if (command.type === 'automation') {
+                    try {
+                        let endpoint = `/api/automation/${command.service}`;
+                        let body = { action: command.action };
+                        if (command.service === 'whatsapp') { body.contact = command.contact; body.message = command.message; }
+                        if (command.service === 'youtube') { body.query = command.query; }
+
+                        await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body),
+                            signal
+                        });
+                        reply = `Executing ${command.service} automation: ${command.action}`;
+                        action = `Auto: ${command.service}`;
+                    } catch (e) {
+                        if (e.name !== 'AbortError') {
+                            reply = `Failed to execute ${command.service} command.`;
+                        }
+                    }
+                }
+
+                else if (command.type === 'file') {
+                    await fetch('/api/system/file', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: command.action, path: command.path, content: command.content })
+                        body: JSON.stringify({ action: command.action, path: command.path, content: command.content }),
+                        signal
                     });
                     reply = `File operation ${command.action} initiated.`;
                     action = `File: ${command.action}`;
-                } catch (e) { }
-            }
+                }
 
-            else if (command.type === 'editor') {
-                try {
-                    fetch('/api/automation/editor', {
+                else if (command.type === 'editor') {
+                    await fetch('/api/automation/editor', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: command.action, text: command.text })
+                        body: JSON.stringify({ action: command.action, text: command.text }),
+                        signal
                     });
                     reply = `Text Editor: ${command.action}`;
                     action = `Editor: ${command.action}`;
-                } catch (e) { }
+                }
             }
-        }
 
-        else if (/^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
-            reply = `GOOD_SESSION, ${user?.username || 'ADMIN'}. NEXORA_STATUS: CALIBRATED.`;
-            action = "Local: Greeting";
-        }
-        else if (/^(?:turn|switch)\s+on\s+(?:the\s+)?(light|fan)/i.test(lowerCmd)) {
-            if (lowerCmd.includes('light')) {
-                toggleDevice('classroomLight', true);
-                reply = "ACCESS: Classroom illumination enabled.";
-            } else if (lowerCmd.includes('fan')) {
-                toggleDevice('labFan', true);
-                reply = "ACCESS: Lab ventilation engaged.";
+            else if (/^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
+                reply = `GOOD_SESSION, ${user?.username || 'ADMIN'}. NEXORA_STATUS: CALIBRATED.`;
+                action = "Local: Greeting";
             }
-            action = "Local: Device ON";
-        }
-        else if (/^(?:turn|switch)\s+off\s+(?:the\s+)?(light|fan)/i.test(lowerCmd)) {
-            if (lowerCmd.includes('light')) {
-                toggleDevice('classroomLight', false);
-                reply = "ACCESS: Classroom illumination disabled.";
-            } else if (lowerCmd.includes('fan')) {
-                toggleDevice('labFan', false);
-                reply = "ACCESS: Lab ventilation disengaged.";
+            else if (/^(?:turn|switch)\s+on\s+(?:the\s+)?(light|fan)/i.test(lowerCmd)) {
+                if (lowerCmd.includes('light')) {
+                    toggleDevice('classroomLight', true);
+                    reply = "ACCESS: Classroom illumination enabled.";
+                } else if (lowerCmd.includes('fan')) {
+                    toggleDevice('labFan', true);
+                    reply = "ACCESS: Lab ventilation engaged.";
+                }
+                action = "Local: Device ON";
             }
-            action = "Local: Device OFF";
-        }
-        else if (lowerCmd.includes('status') || lowerCmd.includes('report')) {
-            reply = `STATUS: LIGHT[${devices.classroomLight ? 'ON' : 'OFF'}] | FAN[${devices.labFan ? 'ON' : 'OFF'}]`;
-            action = "Local: Status Report";
-        }
+            else if (/^(?:turn|switch)\s+off\s+(?:the\s+)?(light|fan)/i.test(lowerCmd)) {
+                if (lowerCmd.includes('light')) {
+                    toggleDevice('classroomLight', false);
+                    reply = "ACCESS: Classroom illumination disabled.";
+                } else if (lowerCmd.includes('fan')) {
+                    toggleDevice('labFan', false);
+                    reply = "ACCESS: Lab ventilation disengaged.";
+                }
+                action = "Local: Device OFF";
+            }
+            else if (lowerCmd.includes('status') || lowerCmd.includes('report')) {
+                reply = `STATUS: LIGHT[${devices.classroomLight ? 'ON' : 'OFF'}] | FAN[${devices.labFan ? 'ON' : 'OFF'}]`;
+                action = "Local: Status Report";
+            }
 
-        // 2. REMOTE AI CORE (Backend Proxy)
-        if (!reply) {
-            try {
+            // 2. REMOTE AI CORE (Backend Proxy)
+            if (!reply) {
                 const res = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: cmd })
+                    body: JSON.stringify({ message: cmd }),
+                    signal
                 });
 
                 if (!res.ok) {
@@ -423,28 +436,45 @@ const ChatInterface = () => {
                 const data = await res.json();
                 reply = data.response;
                 action = "Gemini: Link Active";
-            } catch (error) {
-                console.error("AI Error:", error);
-                reply = `${error.message}. PROTOCOL_FALLBACK.`;
-                action = "Fail: Backend Error";
             }
+
+            // Add AI response to history
+            const aiMsg = { role: 'ai', content: reply, id: Date.now() + 1 };
+            setMessages(prev => [...prev, aiMsg]);
+            speakResponse(reply);
+            addLog(action);
+
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log("Fetch aborted by user");
+            } else {
+                console.error("Processing Error:", error);
+                reply = `${error.message}. PROTOCOL_FALLBACK.`;
+                action = "Fail: System Error";
+                // Show error message
+                setMessages(prev => [...prev, { role: 'ai', content: reply, id: Date.now() + 1 }]);
+                speakResponse(reply);
+            }
+        } finally {
+            // Reset abort controller
+            if (abortControllerRef.current && abortControllerRef.current.signal === signal) {
+                abortControllerRef.current = null;
+            }
+            setIsProcessing(false);
         }
-
-        // Add AI response to history
-        const aiMsg = { role: 'ai', content: reply, id: Date.now() + 1 };
-        setMessages(prev => [...prev, aiMsg]);
-
-        speakResponse(reply);
-
-        addLog(action);
-        setIsProcessing(false);
     };
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (!input.trim()) return;
-        processCommand(input);
-        setInput('');
+
+        // Handle logic for stopping or submitting
+        if (isProcessing) {
+            handleStop();
+        } else {
+            if (!input.trim()) return;
+            processCommand(input);
+            setInput('');
+        }
     };
 
     const handleVisionDetect = (labels) => {
@@ -575,7 +605,8 @@ const ChatInterface = () => {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         placeholder={isProcessing ? "PROCESSING_QUERY..." : "INPUT_COMMAND_CORE..."}
-                        disabled={isProcessing}
+                        disabled={isProcessing && false} // Keep input enabled for editing if needed, but usually block
+                        readOnly={isProcessing} // Make it readonly instead
                         className="w-full bg-black/40 backdrop-blur-xl border-b-2 border-cyan-500/50 py-5 px-8 text-xl text-center text-cyan-50 font-orbitron focus:outline-none focus:border-cyan-400 transition-all placeholder-cyan-500/20 rounded-t-lg"
                     />
                     <div className="absolute bottom-0 left-4 right-4 h-[1px] bg-gradient-to-r from-transparent via-cyan-500 to-transparent shadow-[0_0_10px_#00f3ff]"></div>
@@ -616,10 +647,11 @@ const ChatInterface = () => {
 
                         <button
                             type="submit"
-                            disabled={isProcessing || isListening}
-                            className="text-cyan-500/50 hover:text-cyan-400 transition-colors disabled:opacity-30"
+                            disabled={(!input.trim() && !isProcessing) || isListening}
+                            className={`${isProcessing ? 'text-red-500 hover:text-red-400' : 'text-cyan-500/50 hover:text-cyan-400'} transition-colors disabled:opacity-30`}
+                            title={isProcessing ? "Stop Generating" : "Send"}
                         >
-                            <Send size={24} />
+                            {isProcessing ? <Square fill="currentColor" size={20} /> : <Send size={24} />}
                         </button>
                     </div>
                 </form>
