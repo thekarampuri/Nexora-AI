@@ -7,6 +7,7 @@ import Logs from './Logs';
 import { useAuth } from '../context/AuthContext';
 import hudVideo from '../assets/hud_bg.mp4';
 import { LogOut, Menu } from 'lucide-react';
+import LiquidEther from './LiquidEther';
 
 const HUD = () => {
     const { currentUser, logout } = useAuth();
@@ -30,6 +31,27 @@ const HUD = () => {
                 </video>
                 <div className="absolute inset-0 bg-black/20 bg-[radial-gradient(circle_at_center,_transparent_0%,_#000000_100%)]"></div>
                 <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150"></div>
+
+                {/* LiquidEther Overlay */}
+                <div className="absolute inset-0 opacity-60 mix-blend-screen pointer-events-none">
+                    <LiquidEther
+                        colors={['#06b6d4', '#8b5cf6', '#00f3ff']}
+                        mouseForce={20}
+                        cursorSize={100}
+                        isViscous
+                        viscous={30}
+                        iterationsViscous={32}
+                        iterationsPoisson={32}
+                        resolution={0.5}
+                        isBounce={false}
+                        autoDemo
+                        autoSpeed={0.5}
+                        autoIntensity={2.2}
+                        takeoverDuration={0.25}
+                        autoResumeDelay={3000}
+                        autoRampDuration={0.6}
+                    />
+                </div>
             </div>
 
             {/* 2. Sidebar (Chat History) */}
