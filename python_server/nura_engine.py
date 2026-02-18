@@ -122,32 +122,32 @@ class NuraEngine:
                 # 1. Open WhatsApp Web
                 webbrowser.open("https://web.whatsapp.com")
                 # Increased wait time for slow loading
-                time.sleep(10) 
+                time.sleep(12) 
                 
-                # 2. Focus Search Bar (Ctrl + Alt + / is standard, but Tab might be safer if that fails)
-                # Let's try to click the search bar coordinates if possible, but we don't know screen resolution.
-                # Sticking to hotkeys but with redundancy.
+                # 2. Ensure Focus & Clear Context
+                # Press ESC a few times to close any open menus/chats or "Restore pages" dialogs
+                for _ in range(3):
+                    pyautogui.press('esc')
+                    time.sleep(0.5)
+
+                # 3. Focus Search / New Chat
+                # Ctrl + Alt + / is search
+                # Ctrl + Alt + N is New Chat (also focuses search) - often more reliable
+                pyautogui.hotkey('ctrl', 'alt', 'n')
+                time.sleep(1.5)
                 
-                # Attempt 1: Standard Hotkey
-                pyautogui.hotkey('ctrl', 'alt', '/')
-                time.sleep(1)
-                
-                # Attempt 2: Tab navigation (backup) - usually search is the first focusable element
-                # repeated tabs might get there
-                
-                # 3. Clear any existing text
-                pyautogui.hotkey('ctrl', 'a')
-                pyautogui.press('backspace') 
+                # Fallback: specific tab sequence if hotkey fails? 
+                # For now, let's trust the hotkey + esc sequence.
                 
                 # 4. Type Contact Name
-                pyautogui.write(contact, interval=0.1) # Slower typing
-                time.sleep(2) # Wait for search results
+                pyautogui.write(contact, interval=0.15) # Slower typing
+                time.sleep(2.5) # Wait for search results
                 
                 # 5. Select Contact
                 pyautogui.press('down') # Move to first result
                 time.sleep(0.5)
                 pyautogui.press('enter') # Open chat
-                time.sleep(1)
+                time.sleep(1.5)
                 
                 # 6. Type Message
                 pyautogui.write(message, interval=0.1)
