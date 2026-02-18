@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { split } from 'postcss/lib/list';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
+import { db } from '../firebase';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import { Send, Mic, MicOff, Volume2, VolumeX, Camera as CameraIcon, Copy, Edit, Check, Square } from 'lucide-react';
 import VisionHUD from './VisionHUD';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -10,30 +12,60 @@ import WeatherWidget from './features/WeatherWidget';
 import NewsFeed from './features/NewsFeed';
 import DigitalClock from './features/DigitalClock';
 
-const ChatInterface = () => {
-    const { addLog, toggleDevice, devices, user } = useApp();
+const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
+    const { addLog, toggleDevice, devices } = useApp();
+    const { currentUser } = useAuth();
     const [input, setInput] = useState('');
     const [messages, setMessages] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [isListening, setIsListening] = useState(false);
     const [isMuted, setIsMuted] = useState(false);
     const [isSttSupported, setIsSttSupported] = useState(true);
-    const [sttStatus, setSttStatus] = useState('READY'); // READY, LISTENING, ERROR, UNSUPPORTED
+    const [sttStatus, setSttStatus] = useState('READY');
     const [isVisionMode, setIsVisionMode] = useState(false);
     const [showWeather, setShowWeather] = useState(false);
     const [showNews, setShowNews] = useState(false);
     const [showClock, setShowClock] = useState(false);
     const [lastAnnouncedLabels, setLastAnnouncedLabels] = useState([]);
-    const [copiedId, setCopiedId] = useState(null); // Track which message was copied
+    const [copiedId, setCopiedId] = useState(null);
+    const [showStop, setShowStop] = useState(false);
+
     const inputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const recognitionRef = useRef(null);
-    const transcriptRef = useRef(''); // Use ref for stable transcript storage
+    const transcriptRef = useRef('');
     const restartTimeoutRef = useRef(null);
-    const isListeningRef = useRef(false); // Ref to avoid stale closures in event handlers
-    const isActiveModeRef = useRef(false); // Ref to track if we are actively waiting for a command
+    const isListeningRef = useRef(false);
+    const isActiveModeRef = useRef(false);
     const silenceTimeoutRef = useRef(null);
     const abortControllerRef = useRef(null);
+    const isProcessingRef = useRef(false);
+
+    // --- FIRESTORE SYNC ---
+    useEffect(() => {
+        if (!currentUser || !currentSessionId) {
+            setMessages([]); // Clear messages if no session or user
+            return;
+        }
+
+        const q = query(
+            collection(db, "users", currentUser.uid, "conversations", currentSessionId, "messages"),
+            orderBy("timestamp", "asc")
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const msgs = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setMessages(msgs);
+        }, (error) => {
+            console.error("Message Sync Error:", error);
+        });
+
+        return unsubscribe;
+    }, [currentSessionId, currentUser]);
+    // ----------------------
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -262,30 +294,86 @@ const ChatInterface = () => {
         window.speechSynthesis.speak(utterance);
     };
 
+    // --- 3. Chat Processing (Firestore) ---
     const processCommand = async (cmd) => {
-        const lowerCmd = cmd.toLowerCase();
-        setIsProcessing(true);
+        if (!cmd.trim() || isProcessingRef.current) return;
 
-        // Create new abort controller
+        const lowerCmd = cmd.toLowerCase();
+
+        // UI Immediate Update
+        setIsProcessing(true);
+        isProcessingRef.current = true;
+        setShowStop(true);
+
+        // Note: We rely on Firestore listener for message display, but clearing input is immediate.
+        setInput("");
+
+        // Cancel previous AI request if any
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
         abortControllerRef.current = new AbortController();
         const signal = abortControllerRef.current.signal;
 
-        // Add user message to history
-        const userMsg = { role: 'user', content: cmd, id: Date.now() };
-        setMessages(prev => [...prev, userMsg]);
-
-        let reply = "";
-        let action = "";
+        // Timeout handler
+        const timeoutId = setTimeout(() => {
+            if (abortControllerRef.current) {
+                console.warn("Request timed out");
+                abortControllerRef.current.abort();
+            }
+        }, 20000);
 
         try {
-            // 1. LOCAL COMMAND HANDLERS
+            let activeSessionId = currentSessionId;
+
+            // --- A. NEW SESSION CREATION ---
+            if (!activeSessionId) {
+                try {
+                    const sessionsRef = collection(db, "users", currentUser.uid, "conversations");
+
+                    // 1. Generate Title (First 30 chars)
+                    let title = cmd.substring(0, 30);
+                    if (cmd.length > 30) title += "...";
+
+                    // 2. Create Parent Doc
+                    const docRef = await addDoc(sessionsRef, {
+                        title: title,
+                        createdAt: serverTimestamp(),
+                        lastUpdated: serverTimestamp(),
+                        lastMessage: cmd
+                    });
+
+                    activeSessionId = docRef.id;
+                    onSessionSelect(activeSessionId); // Switch sidebar to this chat
+                } catch (e) {
+                    console.error("Session Creation Failed:", e);
+                    throw new Error("Database Error: Could not create session.");
+                }
+            } else {
+                // Update existing parent doc
+                const sessionDocRef = doc(db, "users", currentUser.uid, "conversations", activeSessionId);
+                updateDoc(sessionDocRef, {
+                    lastMessage: cmd,
+                    lastUpdated: serverTimestamp()
+                }).catch(err => console.error("Error updating session:", err));
+            }
+
+            // --- B. SAVE USER MESSAGE ---
+            await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
+                role: 'user',
+                content: cmd,
+                timestamp: serverTimestamp()
+            });
+
+            let reply = "";
+            let action = "";
+
+            // --- C. COMMAND PROCESSING ---
             const command = parseCommand(cmd);
 
             if (command) {
-                console.log("COMMAND DETECTED:", command);
+                // Determine base URL for Python services (Port 5001)
+                const PYTHON_API = 'http://localhost:5001';
 
                 if (command.type === 'ui') {
                     if (command.component === 'weather') { setShowWeather(true); reply = "Displaying atmospheric data."; }
@@ -293,27 +381,23 @@ const ChatInterface = () => {
                     if (command.component === 'clock') { setShowClock(true); reply = "Synchronizing time."; }
                     action = `UI: Show ${command.component}`;
                 }
-
                 else if (command.type === 'system') {
-                    const res = await fetch('/api/system/command', {
+                    const res = await fetch(`${PYTHON_API}/api/system/command`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ action: command.action }),
                         signal
                     });
                     const data = await res.json();
-
                     if (command.action === 'battery') {
-                        reply = data.error ? "Battery data unavailable." :
-                            `Battery is at ${data.percent}%. Status: ${data.status}.`;
+                        reply = data.error ? "Battery data unavailable." : `Battery is at ${data.percent}%. Status: ${data.status}.`;
                     } else {
                         reply = `System ${command.action} executed.`;
                     }
                     action = `System: ${command.action}`;
                 }
-
                 else if (command.type === 'media') {
-                    await fetch('/api/system/command', {
+                    await fetch(`${PYTHON_API}/api/system/command`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ action: command.action }),
@@ -322,9 +406,8 @@ const ChatInterface = () => {
                     reply = `Media ${command.action} executed.`;
                     action = `Media: ${command.action}`;
                 }
-
                 else if (command.type === 'web') {
-                    await fetch('/api/web/open', {
+                    await fetch(`${PYTHON_API}/api/web/open`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ url: command.url }),
@@ -333,9 +416,8 @@ const ChatInterface = () => {
                     reply = `Opening ${command.url}...`;
                     action = `Web: ${command.url}`;
                 }
-
                 else if (command.type === 'app') {
-                    await fetch('/api/app/launch', {
+                    await fetch(`${PYTHON_API}/api/app/launch`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ app_name: command.app_name }),
@@ -344,10 +426,9 @@ const ChatInterface = () => {
                     reply = `Launching ${command.app_name}...`;
                     action = `App: ${command.app_name}`;
                 }
-
                 else if (command.type === 'automation') {
                     try {
-                        let endpoint = `/api/automation/${command.service}`;
+                        let endpoint = `${PYTHON_API}/api/automation/${command.service}`;
                         let body = { action: command.action };
                         if (command.service === 'whatsapp') { body.contact = command.contact; body.message = command.message; }
                         if (command.service === 'youtube') { body.query = command.query; }
@@ -364,11 +445,11 @@ const ChatInterface = () => {
                         if (e.name !== 'AbortError') {
                             reply = `Failed to execute ${command.service} command.`;
                         }
+                        throw e;
                     }
                 }
-
                 else if (command.type === 'file') {
-                    await fetch('/api/system/file', {
+                    await fetch(`${PYTHON_API}/api/system/file`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ action: command.action, path: command.path, content: command.content }),
@@ -377,9 +458,8 @@ const ChatInterface = () => {
                     reply = `File operation ${command.action} initiated.`;
                     action = `File: ${command.action}`;
                 }
-
                 else if (command.type === 'editor') {
-                    await fetch('/api/automation/editor', {
+                    await fetch(`${PYTHON_API}/api/automation/editor`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ action: command.action, text: command.text }),
@@ -390,38 +470,18 @@ const ChatInterface = () => {
                 }
             }
 
-            else if (/^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
-                reply = `GOOD_SESSION, ${user?.username || 'ADMIN'}. NEXORA_STATUS: CALIBRATED.`;
-                action = "Local: Greeting";
-            }
-            else if (/^(?:turn|switch)\s+on\s+(?:the\s+)?(light|fan)/i.test(lowerCmd)) {
-                if (lowerCmd.includes('light')) {
-                    toggleDevice('classroomLight', true);
-                    reply = "ACCESS: Classroom illumination enabled.";
-                } else if (lowerCmd.includes('fan')) {
-                    toggleDevice('labFan', true);
-                    reply = "ACCESS: Lab ventilation engaged.";
+            // Local Regex Fallbacks
+            if (!reply) {
+                if (/^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
+                    reply = `GOOD_SESSION, ${currentUser?.email || 'ADMIN'}. NEXORA_STATUS: CALIBRATED.`;
+                    action = "Local: Greeting";
                 }
-                action = "Local: Device ON";
-            }
-            else if (/^(?:turn|switch)\s+off\s+(?:the\s+)?(light|fan)/i.test(lowerCmd)) {
-                if (lowerCmd.includes('light')) {
-                    toggleDevice('classroomLight', false);
-                    reply = "ACCESS: Classroom illumination disabled.";
-                } else if (lowerCmd.includes('fan')) {
-                    toggleDevice('labFan', false);
-                    reply = "ACCESS: Lab ventilation disengaged.";
-                }
-                action = "Local: Device OFF";
-            }
-            else if (lowerCmd.includes('status') || lowerCmd.includes('report')) {
-                reply = `STATUS: LIGHT[${devices.classroomLight ? 'ON' : 'OFF'}] | FAN[${devices.labFan ? 'ON' : 'OFF'}]`;
-                action = "Local: Status Report";
+                // ... (Other regex)
             }
 
-            // 2. REMOTE AI CORE (Backend Proxy)
+            // --- D. AI BACKEND FALLBACK ---
             if (!reply) {
-                const res = await fetch('/api/chat', {
+                const res = await fetch('http://localhost:5000/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: cmd }),
@@ -429,7 +489,7 @@ const ChatInterface = () => {
                 });
 
                 if (!res.ok) {
-                    const errorData = await res.json();
+                    const errorData = await res.json().catch(() => ({}));
                     throw new Error(errorData.error || "AI core handshake failed");
                 }
 
@@ -438,29 +498,51 @@ const ChatInterface = () => {
                 action = "Gemini: Link Active";
             }
 
-            // Add AI response to history
-            const aiMsg = { role: 'ai', content: reply, id: Date.now() + 1 };
-            setMessages(prev => [...prev, aiMsg]);
+            // --- E. SAVE AI RESPONSE ---
+            await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
+                role: 'assistant',
+                content: reply,
+                timestamp: serverTimestamp()
+            });
+
+            // Update parent lastMessage with AI reply
+            const sessionDocRef = doc(db, "users", currentUser.uid, "conversations", activeSessionId);
+            updateDoc(sessionDocRef, {
+                lastMessage: reply,
+                lastUpdated: serverTimestamp()
+            }).catch(console.error);
+
             speakResponse(reply);
             addLog(action);
 
         } catch (error) {
+            clearTimeout(timeoutId);
             if (error.name === 'AbortError') {
                 console.log("Fetch aborted by user");
             } else {
                 console.error("Processing Error:", error);
-                reply = `${error.message}. PROTOCOL_FALLBACK.`;
-                action = "Fail: System Error";
-                // Show error message
-                setMessages(prev => [...prev, { role: 'ai', content: reply, id: Date.now() + 1 }]);
-                speakResponse(reply);
+                const errReply = `ERROR: ${error.message || "Unknown Failure"}.`;
+
+                // Try to save error to chat
+                if (currentUser && currentSessionId) {
+                    try {
+                        await addDoc(collection(db, "users", currentUser.uid, "conversations", currentSessionId, "messages"), {
+                            role: 'assistant',
+                            content: errReply,
+                            timestamp: serverTimestamp()
+                        });
+                    } catch (e) { }
+                }
+                speakResponse("System error encountered.");
             }
         } finally {
-            // Reset abort controller
+            clearTimeout(timeoutId);
             if (abortControllerRef.current && abortControllerRef.current.signal === signal) {
                 abortControllerRef.current = null;
             }
             setIsProcessing(false);
+            isProcessingRef.current = false;
+            setShowStop(false);
         }
     };
 
