@@ -57,7 +57,7 @@ echo Opening browser in 5 seconds...
 echo.
 
 :: Launch Browser in background
-start /b cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:5173"
+start "" "http://localhost:5173"
 
 :: Use concurrently to run all servers in one window
 call npm start

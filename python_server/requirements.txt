@@ -5,3 +5,6 @@ psutil
 ultralytics
 opencv-python-headless
 numpy
+requests
+deepface
+tf-keras
