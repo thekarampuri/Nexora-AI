@@ -28,6 +28,7 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
     const [showClock, setShowClock] = useState(false);
     const [lastAnnouncedLabels, setLastAnnouncedLabels] = useState([]);
     const [copiedId, setCopiedId] = useState(null);
+    const [streamingMessage, setStreamingMessage] = useState(null);
     const [showStop, setShowStop] = useState(false);
 
     const inputRef = useRef(null);
@@ -93,7 +94,7 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages, isProcessing]);
+    }, [messages, isProcessing, streamingMessage]);
 
     useEffect(() => {
         // 1. Check Security Context
@@ -175,8 +176,6 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
         };
 
         recognitionRef.current.onerror = (event) => {
-            // Network and no-speech errors are normal during continuous recognition
-            // They trigger auto-restart, so we don't need to log them as errors
             if (event.error === 'network' || event.error === 'no-speech') {
                 return;
             }
@@ -232,11 +231,9 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
             try {
                 transcriptRef.current = '';
                 recognitionRef.current?.start();
+                isListeningRef.current = true;
+                isActiveModeRef.current = true;
 
-                isListeningRef.current = true; // Enable the loop
-                isActiveModeRef.current = true; // Enable command processing immediately
-
-                // Start silence timer since we are active
                 if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
                 silenceTimeoutRef.current = setTimeout(() => {
                     if (isActiveModeRef.current) {
@@ -247,21 +244,17 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                     }
                 }, 6000);
 
-
-
                 setIsListening(true);
                 setSttStatus('LISTENING');
                 addLog("STT: Microphone Activated");
                 speakResponse("Ready.");
             } catch (err) {
                 console.error("Failed to start:", err);
-                // If already started, just sync state
                 isListeningRef.current = true;
                 setIsListening(true);
             }
         }
     };
-
 
     const toggleMute = () => {
         const nextMuted = !isMuted;
@@ -274,19 +267,17 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
     const speakResponse = (text) => {
         if (!window.speechSynthesis || isMuted) return;
 
-        // Clean markdown for better speech
         const cleanText = text
-            .replace(/[*#_>`]/g, '') // Remove formatting chars
-            .replace(/\[.*?\]\(.*?\)/g, '') // Remove links
+            .replace(/[*#_>`]/g, '')
+            .replace(/\[.*?\]\(.*?\)/g, '')
             .replace(/SYSTEM_TIME:.*?/g, 'The current system time is ')
             .replace(/STATUS:.*?/g, 'The current system status is ');
 
         const utterance = new SpeechSynthesisUtterance(cleanText);
         utterance.lang = 'en-US';
         utterance.rate = 1.0;
-        utterance.pitch = 0.9; // Slightly lower for futuristic feel
+        utterance.pitch = 0.9;
 
-        // Find a suitable voice (optional, but premium feel)
         const voices = window.speechSynthesis.getVoices();
         const preferredVoice = voices.find(v => v.name.includes('Google US English') || v.name.includes('Female'));
         if (preferredVoice) utterance.voice = preferredVoice;
@@ -304,76 +295,61 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
         setIsProcessing(true);
         isProcessingRef.current = true;
         setShowStop(true);
+        setStreamingMessage(null);
 
-        // Note: We rely on Firestore listener for message display, but clearing input is immediate.
         setInput("");
 
-        // Cancel previous AI request if any
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
         abortControllerRef.current = new AbortController();
         const signal = abortControllerRef.current.signal;
 
-        // Timeout handler
         const timeoutId = setTimeout(() => {
             if (abortControllerRef.current) {
                 console.warn("Request timed out");
                 abortControllerRef.current.abort();
             }
-        }, 20000);
+        }, 40000);
+
+        let activeSessionId = currentSessionId;
 
         try {
-            let activeSessionId = currentSessionId;
-
             // --- A. NEW SESSION CREATION ---
             if (!activeSessionId) {
                 try {
                     const sessionsRef = collection(db, "users", currentUser.uid, "conversations");
-
-                    // 1. Generate Title (First 30 chars)
-                    let title = cmd.substring(0, 30);
-                    if (cmd.length > 30) title += "...";
-
+                    // 1. Generate Title 
+                    let title = cmd.substring(0, 30) + (cmd.length > 30 ? "..." : "");
                     // 2. Create Parent Doc
                     const docRef = await addDoc(sessionsRef, {
-                        title: title,
-                        createdAt: serverTimestamp(),
-                        lastUpdated: serverTimestamp(),
-                        lastMessage: cmd
+                        title, createdAt: serverTimestamp(), lastUpdated: serverTimestamp(), lastMessage: cmd
                     });
-
                     activeSessionId = docRef.id;
-                    onSessionSelect(activeSessionId); // Switch sidebar to this chat
+                    onSessionSelect(activeSessionId);
                 } catch (e) {
                     console.error("Session Creation Failed:", e);
                     throw new Error("Database Error: Could not create session.");
                 }
             } else {
-                // Update existing parent doc
-                const sessionDocRef = doc(db, "users", currentUser.uid, "conversations", activeSessionId);
-                updateDoc(sessionDocRef, {
-                    lastMessage: cmd,
-                    lastUpdated: serverTimestamp()
-                }).catch(err => console.error("Error updating session:", err));
+                updateDoc(doc(db, "users", currentUser.uid, "conversations", activeSessionId), {
+                    lastMessage: cmd, lastUpdated: serverTimestamp()
+                }).catch(console.error);
             }
 
             // --- B. SAVE USER MESSAGE ---
             await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
-                role: 'user',
-                content: cmd,
-                timestamp: serverTimestamp()
+                role: 'user', content: cmd, timestamp: serverTimestamp()
             });
-
-            let reply = "";
-            let action = "";
 
             // --- C. COMMAND PROCESSING ---
             const command = parseCommand(cmd);
+            let reply = "";
+            let action = "";
 
             if (command) {
-                // Determine base URL for Python services (Port 5001)
                 const PYTHON_API = 'http://localhost:5001';
+                const defaultHeaders = { 'Content-Type': 'application/json' };
 
                 if (command.type === 'ui') {
                     if (command.component === 'weather') { setShowWeather(true); reply = "Displaying atmospheric data."; }
@@ -381,158 +357,102 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                     if (command.component === 'clock') { setShowClock(true); reply = "Synchronizing time."; }
                     action = `UI: Show ${command.component}`;
                 }
-                else if (command.type === 'system') {
-                    const res = await fetch(`${PYTHON_API}/api/system/command`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: command.action }),
-                        signal
-                    });
-                    const data = await res.json();
-                    if (command.action === 'battery') {
-                        reply = data.error ? "Battery data unavailable." : `Battery is at ${data.percent}%. Status: ${data.status}.`;
-                    } else {
-                        reply = `System ${command.action} executed.`;
-                    }
-                    action = `System: ${command.action}`;
-                }
-                else if (command.type === 'media') {
-                    await fetch(`${PYTHON_API}/api/system/command`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: command.action }),
-                        signal
-                    });
-                    reply = `Media ${command.action} executed.`;
-                    action = `Media: ${command.action}`;
+                else if (['system', 'media', 'app'].includes(command.type)) {
+                    const endpoint = command.type === 'app' ? '/api/app/launch' : '/api/system/command';
+                    const body = command.type === 'app' ? { app_name: command.app_name } : { action: command.action };
+                    await fetch(`${PYTHON_API}${endpoint}`, { method: 'POST', headers: defaultHeaders, body: JSON.stringify(body), signal });
+                    reply = `${command.type.toUpperCase()}: ${command.action || command.app_name} executed.`;
                 }
                 else if (command.type === 'web') {
-                    await fetch(`${PYTHON_API}/api/web/open`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: command.url }),
-                        signal
-                    });
+                    await fetch(`${PYTHON_API}/api/web/open`, { method: 'POST', headers: defaultHeaders, body: JSON.stringify({ url: command.url }), signal });
                     reply = `Opening ${command.url}...`;
-                    action = `Web: ${command.url}`;
-                }
-                else if (command.type === 'app') {
-                    await fetch(`${PYTHON_API}/api/app/launch`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ app_name: command.app_name }),
-                        signal
-                    });
-                    reply = `Launching ${command.app_name}...`;
-                    action = `App: ${command.app_name}`;
                 }
                 else if (command.type === 'automation') {
                     try {
-                        let endpoint = `${PYTHON_API}/api/automation/${command.service}`;
-                        let body = { action: command.action };
-                        if (command.service === 'whatsapp') { body.contact = command.contact; body.message = command.message; }
-                        if (command.service === 'youtube') { body.query = command.query; }
-
-                        await fetch(endpoint, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body),
-                            signal
-                        });
+                        const endpoint = `${PYTHON_API}/api/automation/${command.service}`;
+                        await fetch(endpoint, { method: 'POST', headers: defaultHeaders, body: JSON.stringify(command), signal });
                         reply = `Executing ${command.service} automation: ${command.action}`;
-                        action = `Auto: ${command.service}`;
-                    } catch (e) {
-                        if (e.name !== 'AbortError') {
-                            reply = `Failed to execute ${command.service} command.`;
-                        }
-                        throw e;
-                    }
+                    } catch (e) { if (e.name !== 'AbortError') reply = "Automation failed."; }
                 }
-                else if (command.type === 'file') {
-                    await fetch(`${PYTHON_API}/api/system/file`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: command.action, path: command.path, content: command.content }),
-                        signal
-                    });
-                    reply = `File operation ${command.action} initiated.`;
-                    action = `File: ${command.action}`;
+                else if (['file', 'editor'].includes(command.type)) {
+                    const endpoint = command.type === 'file' ? '/api/system/file' : '/api/automation/editor';
+                    await fetch(`${PYTHON_API}${endpoint}`, { method: 'POST', headers: defaultHeaders, body: JSON.stringify(command), signal });
+                    reply = `Operation executing...`;
                 }
-                else if (command.type === 'editor') {
-                    await fetch(`${PYTHON_API}/api/automation/editor`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: command.action, text: command.text }),
-                        signal
-                    });
-                    reply = `Text Editor: ${command.action}`;
-                    action = `Editor: ${command.action}`;
-                }
+                if (reply) action = `Command: ${command.type}`;
             }
 
             // Local Regex Fallbacks
-            if (!reply) {
-                if (/^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
-                    reply = `GOOD_SESSION, ${currentUser?.email || 'ADMIN'}. NEXORA_STATUS: CALIBRATED.`;
-                    action = "Local: Greeting";
-                }
-                // ... (Other regex)
+            if (!reply && /^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
+                reply = `GOOD_SESSION, ${currentUser?.email || 'ADMIN'}. NEXORA_STATUS: CALIBRATED.`;
+                action = "Local: Greeting";
             }
 
-            // --- D. AI BACKEND FALLBACK ---
-            if (!reply) {
-                const res = await fetch('http://localhost:5000/api/chat', {
+            // --- D. AI STREAMING OR FALLBACK ---
+            if (reply) {
+                // Save locally generated reply immediately
+                await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
+                    role: 'assistant', content: reply, timestamp: serverTimestamp()
+                });
+                speakResponse(reply);
+                addLog(action);
+            }
+            else {
+                // START STREAMING
+                const response = await fetch('http://localhost:5000/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: cmd }),
                     signal
                 });
 
-                if (!res.ok) {
-                    const errorData = await res.json().catch(() => ({}));
-                    throw new Error(errorData.error || "AI core handshake failed");
+                if (!response.ok) throw new Error("AI Stream Connection Failed");
+                if (!response.body) throw new Error("ReadableStream not supported.");
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let accumulatedText = "";
+
+                // Initialize streaming message
+                setStreamingMessage("▋");
+                // speakResponse("Processing..."); // Optional: Speak start
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    accumulatedText += chunk;
+                    setStreamingMessage(accumulatedText + "▋");
+                    if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
                 }
 
-                const data = await res.json();
-                reply = data.response;
-                action = "Gemini: Link Active";
+                reply = accumulatedText;
+                setStreamingMessage(null); // Clear streaming UI
+
+                // Save FINAL Message to Firestore
+                await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
+                    role: 'assistant', content: reply, timestamp: serverTimestamp()
+                });
+
+                updateDoc(doc(db, "users", currentUser.uid, "conversations", activeSessionId), {
+                    lastMessage: reply, lastUpdated: serverTimestamp()
+                }).catch(console.error);
+
+                speakResponse(reply);
+                addLog("Gemini: Stream Complete");
             }
-
-            // --- E. SAVE AI RESPONSE ---
-            await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
-                role: 'assistant',
-                content: reply,
-                timestamp: serverTimestamp()
-            });
-
-            // Update parent lastMessage with AI reply
-            const sessionDocRef = doc(db, "users", currentUser.uid, "conversations", activeSessionId);
-            updateDoc(sessionDocRef, {
-                lastMessage: reply,
-                lastUpdated: serverTimestamp()
-            }).catch(console.error);
-
-            speakResponse(reply);
-            addLog(action);
 
         } catch (error) {
             clearTimeout(timeoutId);
-            if (error.name === 'AbortError') {
-                console.log("Fetch aborted by user");
-            } else {
+            if (error.name !== 'AbortError') {
                 console.error("Processing Error:", error);
                 const errReply = `ERROR: ${error.message || "Unknown Failure"}.`;
-
-                // Try to save error to chat
-                if (currentUser && currentSessionId) {
-                    try {
-                        await addDoc(collection(db, "users", currentUser.uid, "conversations", currentSessionId, "messages"), {
-                            role: 'assistant',
-                            content: errReply,
-                            timestamp: serverTimestamp()
-                        });
-                    } catch (e) { }
-                }
+                try {
+                    await addDoc(collection(db, "users", currentUser.uid, "conversations", currentSessionId, "messages"), {
+                        role: 'assistant', content: errReply, timestamp: serverTimestamp()
+                    });
+                } catch (e) { }
                 speakResponse("System error encountered.");
             }
         } finally {
@@ -543,6 +463,7 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
             setIsProcessing(false);
             isProcessingRef.current = false;
             setShowStop(false);
+            setStreamingMessage(null);
         }
     };
 
@@ -660,7 +581,25 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                         ))}
                     </AnimatePresence>
 
-                    {isProcessing && (
+                    {/* STREAMING MESSAGE INDICATOR/CONTENT */}
+                    {streamingMessage && (
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="flex justify-start relative group"
+                        >
+                            <div className="relative max-w-[85%] px-6 py-4 rounded-xl border backdrop-blur-md transition-all bg-black/60 border-cyan-400/50 text-cyan-100 shadow-[0_0_20px_rgba(0,243,255,0.2)]">
+                                <div className="font-orbitron text-[10px] uppercase tracking-widest opacity-50 mb-2">
+                                    NEXORA_CORE (PROCESSING...)
+                                </div>
+                                <div className="prose prose-invert prose-cyan max-w-none">
+                                    <ReactMarkdown>{streamingMessage}</ReactMarkdown>
+                                </div>
+                            </div>
+                        </motion.div>
+                    )}
+
+                    {isProcessing && !streamingMessage && (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}

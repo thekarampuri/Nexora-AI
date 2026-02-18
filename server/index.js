@@ -36,9 +36,12 @@ app.post('/api/chat', async (req, res) => {
             return res.status(400).json({ error: "Message is required" });
         }
 
-        // Using Gemini 3 Flash Preview with the new SDK syntax
-        const result = await client.models.generateContent({
-            model: "gemini-3-flash-preview",
+        // Set headers for streaming
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        const result = await client.models.generateContentStream({
+            model: "gemini-1.5-flash",
             contents: [{ role: 'user', parts: [{ text: message }] }],
             config: {
                 systemInstruction: "You are 'NEXORA', an advanced AI core for a futuristic HUD system. " +
@@ -50,21 +53,20 @@ app.post('/api/chat', async (req, res) => {
             }
         });
 
-        // The new SDK returns text differently
-        res.json({ response: result.text || "NO_DATA_RECONSTRUCTED" });
-    } catch (error) {
-        console.error("Gemini 3 Proxy Error Details:", error);
-
-        let errorMessage = "AI_CORE_FAILURE: Protocol corruption.";
-        if (error.message?.includes("API key not valid")) {
-            errorMessage = "ERROR: INVALID_IDENTITY. API key is rejected by Google.";
-        } else if (error.message?.includes("quota")) {
-            errorMessage = "ERROR: QUOTA_EXCEEDED. AI core exhausted.";
-        } else if (error.message) {
-            errorMessage = `AI_ERROR: ${error.message.substring(0, 70)}...`;
+        for await (const chunk of result.stream) {
+            const chunkText = chunk.text();
+            res.write(chunkText);
         }
 
-        res.status(500).json({ error: errorMessage });
+        res.end();
+
+    } catch (error) {
+        console.error("Gemini Proxy Error Details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        if (!res.headersSent) {
+            res.status(500).json({ error: `AI_CORE_FAILURE: ${error.message}` });
+        } else {
+            res.end();
+        }
     }
 });
 

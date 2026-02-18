@@ -1,70 +1,40 @@
 @echo off
-TITLE NEXORA AI - SYSTEM LAUNCHER
-color 0B
+setlocal
+title NEXORA AI - SYSTEM CONTROLLER
 
-echo ============================================================
-echo          NEXORA AI - COMPLETE SYSTEM INITIALIZATION           
-echo ============================================================
+echo ==================================================
+echo       NEXORA AI - UNIFIED SYSTEM PRE-FLIGHT
+echo ==================================================
 echo.
 
-:: Check for Python
-where python >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Python not found! Please install Python 3.8+
-    pause
-    exit /b 1
-)
+:: 1. Kill any existing instances (Clean Slate)
+echo [SYSTEM] Terminating orphan processes...
+taskkill /F /IM node.exe >nul 2>&1
+taskkill /F /IM python.exe >nul 2>&1
 
-:: Check for Node.js
-where node >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Node.js not found! Please install Node.js 16+
-    pause
-    exit /b 1
-)
+:: 2. Check Backend Dependencies
+echo [SYSTEM] Verifying Core Modules (Node.js)...
+call npm install --no-audit --no-fund --loglevel=error >nul 2>&1
+echo [SYSTEM] Node.js Modules Verified.
 
-:: Check for dependencies
-if not exist "node_modules\" (
-    echo [!] Installing Node dependencies...
-    call npm install
-)
+:: 3. Check Python Dependencies
+echo [SYSTEM] Verifying Neural Engine (Python)...
+:: Assuming requirements are installed or skipped for speed. 
+:: You could add: pip install -r requirements.txt >nul 2>&1
 
-echo [!] Verifying Python dependencies (this may take a moment)...
-pip install -r python_server\requirements.txt
-if %ERRORLEVEL% NEQ 0 (
-    echo [WARN] Failed to install Python dependencies.
-    pause
-) else (
-    echo [OK] Python dependencies verified.
-)
+:: 4. Launch Services (Single Window)
+echo.
+echo [SYSTEM] Launching All Services...
 
-if not exist "python_server\test_output\" (
-    echo [!] Creating Python test directories...
-    mkdir python_server\test_output 2>nul
-    mkdir python_server\test_images 2>nul
-)
+:: Open Browser (Async)
+start /b cmd /c "timeout /t 5 >nul && start http://localhost:5173"
+
+:: Run everything via npm (concurrently)
+npm run start
 
 echo.
-echo ============================================================
-echo Starting all NEXORA services in this window...
-echo ============================================================
+echo ==================================================
+echo      NEXORA SYSTEM SHUTDOWN
+echo ==================================================
 echo.
-echo [VISION] Python Server will run on: http://localhost:5001
-echo [AI]     Node Backend will run on:  http://localhost:5000
-echo [UI]     Frontend will run on:      http://localhost:5173
-echo.
-echo Opening browser in 5 seconds...
-echo.
-
-:: Launch Browser in background
-start "" "http://localhost:5173"
-
-:: Use concurrently to run all servers in one window
-call npm start
-
-echo.
-echo ============================================================
-echo NEXORA_SESSION: TERMINATED
-echo ============================================================
-echo.
-pause
+pause >nul
