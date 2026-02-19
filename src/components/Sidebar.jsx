@@ -48,13 +48,13 @@ const Sidebar = ({ currentSessionId, onSessionSelect, isOpen, setIsOpen }) => {
             <motion.div
                 initial={{ width: 0, opacity: 0 }}
                 animate={{ width: isOpen ? 260 : 0, opacity: isOpen ? 1 : 0 }}
-                className="h-full bg-black border-r border-gray-800 flex flex-col overflow-hidden whitespace-nowrap"
+                className="h-full bg-black border-r border-gray-800 flex flex-col overflow-hidden whitespace-nowrap relative z-50"
             >
                 <div className="p-4 flex flex-col h-full w-[260px]"> {/* Fixed width inner container to prevent text squash */}
 
                     {/* New Chat */}
-                    <button onClick={handleNewChat} className="flex items-center gap-3 px-4 py-3 rounded-lg bg-cyan-900/20 border border-cyan-800 hover:bg-cyan-900/50 hover:border-cyan-500 text-cyan-100 transition-all text-sm mb-4 cursor-pointer shadow-sm">
-                        <Plus size={18} /> <span className="font-medium">New Chat</span>
+                    <button onClick={handleNewChat} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-900/20 transition-all text-sm mb-4 cursor-pointer font-medium">
+                        <Plus size={18} /> <span>New Chat</span>
                     </button>
 
                     {/* History */}

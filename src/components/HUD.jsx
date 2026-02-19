@@ -92,8 +92,8 @@ const HUD = () => {
                     {activeTab === 'settings' && <SettingsPanel />}
                 </div>
 
-                {/* Bottom Navigation */}
-                <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
+                {/* Bottom Navigation - REMOVED per user request */}
+                {/* <Navbar activeTab={activeTab} setActiveTab={setActiveTab} /> */}
 
 
             </div>
