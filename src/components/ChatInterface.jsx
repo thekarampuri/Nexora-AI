@@ -406,7 +406,14 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                     signal
                 });
 
-                if (!response.ok) throw new Error("AI Stream Connection Failed");
+                if (!response.ok) {
+                    let errorMessage = "AI Stream Connection Failed";
+                    try {
+                        const errorData = await response.json();
+                        errorMessage = errorData.message || errorData.error || errorMessage;
+                    } catch (e) { /* ignore json parse error */ }
+                    throw new Error(errorMessage);
+                }
                 if (!response.body) throw new Error("ReadableStream not supported.");
 
                 const reader = response.body.getReader();
