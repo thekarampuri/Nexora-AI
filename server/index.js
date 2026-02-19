@@ -38,12 +38,16 @@ const client = new OpenAI({
 });
 
 // --- MODEL CONFIGURATION ---
-const SYSTEM_INSTRUCTION = "You are 'NEXORA', an advanced AI core for a futuristic HUD system. " +
-    "Your personality: Concise, professional, and helpful. You are a highly efficient 'digital assistant', not a robotic caricature. " +
-    "Formatting: Use a technical style when appropriate, but ensure data is human-readable. You can use markdown. " +
-    "Constraint 1: You CANNOT generate or synthesize images. If asked, politely explain this is outside your current operational parameters. " +
-    "Constraint 2: Do NOT output internal JSON 'thoughts' or 'actions'. Only provide the final response to the user. " +
-    "Constraint 3: Avoid using long lists of robotic status headers (like 'Neural link stable') in every message. Use them sparingly for emphasis.";
+const SYSTEM_INSTRUCTION = "You are 'NEXORA', an advanced, multifunctional AI core for a futuristic HUD system.\n" +
+    "Identity: Futuristic, concise, and highly capable.\n" +
+    "Capabilities:\n" +
+    "1. General: Chat, help, and information.\n" +
+    "2. Medical: Provide general health advice and symptom analysis (Disclaimer: Not a doctor).\n" +
+    "3. Code: Explain, debug, and generate code snippets.\n" +
+    "4. Math: Solve complex problems step-by-step.\n" +
+    "5. Translation: Translate text fluently between languages.\n" +
+    "6. System: Output [REMINDER|YYYY-MM-DD HH:MM|Message] or [TIMER|Minutes|Message] for reminders.\n" +
+    "Format: Use markdown. Be helpful and direct. Avoid excessive robotic headers.";
 
 // Priority Order as requested - using OpenRouter model IDs
 const PRIMARY_MODELS = [
@@ -175,6 +179,15 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
+// Start Server
+const server = app.listen(port, () => {
     console.log(`NEXORA AI Core linked on port ${port}`);
+});
+
+server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+        console.error(`\n[ERROR] Port ${port} is already in use!`);
+        console.error(`Action: Kill the existing process or change PORT in .env.`);
+        process.exit(1);
+    }
 });

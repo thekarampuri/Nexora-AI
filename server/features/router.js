@@ -66,9 +66,12 @@ router.post('/chat', async (req, res) => {
 
 
 import multer from 'multer';
-import pdf from 'pdf-parse';
 import * as cheerio from 'cheerio';
 import fs from 'fs';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const pdf = require('pdf-parse');
 
 // Configure Multer for PDF Uploads
 const upload = multer({ dest: 'uploads/' });

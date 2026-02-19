@@ -3,7 +3,11 @@ import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
-import { Send, Mic, MicOff, Volume2, VolumeX, Camera as CameraIcon, Copy, Edit, Check, Square, Paperclip, Link as LinkIcon, ChevronDown, Sparkles } from 'lucide-react';
+import {
+    Send, Mic, MicOff, Paperclip, Camera as CameraIcon, X, Sparkles, ChevronDown, Link as LinkIcon,
+    HeartPulse, Code, Calculator, Languages, BrainCircuit, Image, CloudSun, Globe, Cpu, DollarSign, FileText,
+    Square
+} from 'lucide-react';
 import VisionHUD from './VisionHUD';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
@@ -60,7 +64,7 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
             orderBy("timestamp", "asc")
         );
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
             const msgs = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
@@ -427,14 +431,26 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
             }
             else {
                 // STANDARD AI CHAT
-                const response = await fetch('http://localhost:5000/api/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: cmd }),
-                    signal
-                });
+                let response;
+                try {
+                    response = await fetch('http://localhost:5000/api/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message: cmd }),
+                        signal
+                    });
+                } catch (netErr) {
+                    console.error("Fetch failed:", netErr);
+                    throw new Error("Network Error: Is the backend server running? (Port 5000)");
+                }
 
-                if (!response.ok) throw new Error("AI Request Failed");
+                if (!response.ok) {
+                    let errText = "Unknown Server Error";
+                    try { errText = await response.text(); } catch (e) { }
+                    throw new Error(`Server Error (${response.status}): ${errText}`);
+                }
+
+                if (!response.body) throw new Error("No response body received from server.");
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
@@ -561,11 +577,18 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
 
 
     const MODES = [
-        { id: 'default', label: 'Nexora Core', icon: Sparkles, color: 'text-cyan-400' },
-        { id: 'medical', label: 'Medical AI', icon: Sparkles, color: 'text-red-400' },
-        { id: 'code_explainer', label: 'Code Expert', icon: Sparkles, color: 'text-yellow-400' },
-        { id: 'math_solver', label: 'Math Solver', icon: Sparkles, color: 'text-blue-400' },
-        { id: 'translator', label: 'Translator', icon: Sparkles, color: 'text-green-400' },
+        { id: 'default', label: 'Nexora Core', icon: Sparkles, color: 'text-cyan-400', desc: 'Multifunctional AI' },
+        { id: 'quiz_generator', label: 'Quiz Master', icon: BrainCircuit, color: 'text-purple-400', desc: 'Knowledge Test' },
+        { id: 'image_gen', label: 'Image Gen', icon: Image, color: 'text-pink-400', desc: 'Visual Creation' },
+
+        // Widgets
+        { id: 'weather', label: 'Weather', icon: CloudSun, color: 'text-orange-400', desc: 'Live Forecast', type: 'widget' },
+        { id: 'news', label: 'News Feed', icon: Globe, color: 'text-blue-500', desc: 'Global Headlines', type: 'widget' },
+        { id: 'system', label: 'System Monitor', icon: Cpu, color: 'text-gray-400', desc: 'Hardware Stats', type: 'tool' },
+
+        // Tools
+        { id: 'pdf', label: 'PDF Analyzer', icon: FileText, color: 'text-red-500', desc: 'Document Scan', type: 'action' },
+        { id: 'url', label: 'Web Summary', icon: LinkIcon, color: 'text-indigo-400', desc: 'Page Content', type: 'action' },
     ];
 
     const handleFileUpload = async (e) => {
@@ -677,7 +700,56 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
             </div>
 
             {/* Input Area */}
-            <div className="w-full max-w-3xl mx-auto px-4 pb-6">
+            <div className="w-full max-w-3xl mx-auto px-4 pb-6 relative">
+
+                {/* Feature Menu (Restored) */}
+                <AnimatePresence>
+                    {showModeMenu && (
+                        <motion.div
+                            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                            className="absolute bottom-24 left-4 w-72 bg-gray-900/95 border border-gray-700 rounded-2xl shadow-2xl backdrop-blur-xl overflow-hidden z-50 flex flex-col"
+                        >
+                            <div className="px-4 py-3 border-b border-gray-800">
+                                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Available Features</span>
+                            </div>
+                            <div className="p-2 space-y-1 max-h-[400px] overflow-y-auto custom-scrollbar">
+                                {MODES.map(m => (
+                                    <button
+                                        key={m.id}
+                                        onClick={() => {
+                                            if (m.type === 'widget') {
+                                                if (m.id === 'weather') setShowWeather(true);
+                                                if (m.id === 'news') setShowNews(true);
+                                            } else if (m.type === 'action') {
+                                                if (m.id === 'pdf') fileInputRef.current?.click();
+                                                if (m.id === 'url') handleUrlInput();
+                                            } else if (m.id === 'system') {
+                                                processCommand("system status");
+                                            } else if (m.id === 'currency') {
+                                                setInput("Convert 1 USD to EUR");
+                                            } else {
+                                                setMode(m.id);
+                                            }
+                                            setShowModeMenu(false);
+                                        }}
+                                        className={`w-full text-left px-3 py-3 text-sm rounded-xl hover:bg-gray-800 transition-all flex items-center gap-3 ${mode === m.id ? 'bg-cyan-900/30 text-cyan-400 border border-cyan-900/50' : 'text-gray-300 border border-transparent'}`}
+                                    >
+                                        <div className={`p-2 rounded-lg bg-gray-800 ${m.color.replace('text-', 'bg-').replace('400', '900/50')} ${m.color}`}>
+                                            <m.icon size={16} />
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="font-medium">{m.label}</span>
+                                            <span className="text-[10px] text-gray-500 leading-none">{m.desc || "AI Assistant"}</span>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
                 <div className="max-w-4xl mx-auto flex items-end gap-3 rounded-xl bg-gray-800/50 p-2 border border-gray-700/50 backdrop-blur-sm">
 
                     {/* Left Actions */}
