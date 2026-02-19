@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Zap, FileText, Settings } from 'lucide-react';
+import { LayoutDashboard, Zap, FileText, Settings, Grid } from 'lucide-react';
 
 const Navbar = ({ activeTab, setActiveTab }) => {
     const navItems = [

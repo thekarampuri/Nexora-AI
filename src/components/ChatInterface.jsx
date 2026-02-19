@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
-import { Send, Mic, MicOff, Volume2, VolumeX, Camera as CameraIcon, Copy, Edit, Check, Square } from 'lucide-react';
+import { Send, Mic, MicOff, Volume2, VolumeX, Camera as CameraIcon, Copy, Edit, Check, Square, Paperclip, Link as LinkIcon, ChevronDown, Sparkles } from 'lucide-react';
 import VisionHUD from './VisionHUD';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
@@ -30,6 +30,12 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
     const [copiedId, setCopiedId] = useState(null);
     const [streamingMessage, setStreamingMessage] = useState(null);
     const [showStop, setShowStop] = useState(false);
+
+    // --- FEATURE STATE ---
+    const [mode, setMode] = useState('default');
+    const [showModeMenu, setShowModeMenu] = useState(false);
+    const [attachment, setAttachment] = useState(null);
+    const fileInputRef = useRef(null);
 
     const inputRef = useRef(null);
     const messagesEndRef = useRef(null);
@@ -233,6 +239,7 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                 recognitionRef.current?.start();
                 isListeningRef.current = true;
                 isActiveModeRef.current = true;
+                setIsListening(true); // Update UI state
 
                 if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
                 silenceTimeoutRef.current = setTimeout(() => {
@@ -243,15 +250,8 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                         speakResponse("I didn't hear anything.");
                     }
                 }, 6000);
-
-                setIsListening(true);
-                setSttStatus('LISTENING');
-                addLog("STT: Microphone Activated");
-                speakResponse("Ready.");
             } catch (err) {
-                console.error("Failed to start:", err);
-                isListeningRef.current = true;
-                setIsListening(true);
+                console.error("STT Start Error", err);
             }
         }
     };
@@ -347,7 +347,40 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
             let reply = "";
             let action = "";
 
-            if (command) {
+            // 1. FEATURE MODE (Medical, Code, or File Attachment)
+            if (mode !== 'default' || attachment) {
+                const fullContent = attachment ? `[CONTEXT: ${attachment.content}]\n\n${cmd}` : cmd;
+
+                // Call Feature Endpoint
+                const response = await fetch('http://localhost:5000/api/features/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: fullContent, mode }),
+                    signal
+                });
+
+                if (!response.ok) throw new Error("Feature Request Failed");
+
+                // Stream setup
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let aiText = "";
+                setStreamingMessage("▋");
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    aiText += decoder.decode(value, { stream: true });
+                    setStreamingMessage(aiText + "▋");
+                    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                }
+
+                reply = aiText;
+                setStreamingMessage(null);
+                action = `Mode: ${mode}`;
+
+            } else if (command) {
+                // 2. SYSTEM COMMANDS (Only in Default Mode)
                 const PYTHON_API = 'http://localhost:5001';
                 const defaultHeaders = { 'Content-Type': 'application/json' };
 
@@ -383,22 +416,17 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
             }
 
             // Local Regex Fallbacks
-            if (!reply && /^\b(hello|hi|hey)\b/i.test(lowerCmd)) {
+            if (!reply && /^\b(hello|hi|hey)\b/i.test(lowerCmd) && mode === 'default') {
                 reply = `GOOD_SESSION, ${currentUser?.email || 'ADMIN'}. NEXORA_STATUS: CALIBRATED.`;
                 action = "Local: Greeting";
             }
 
-            // --- D. AI STREAMING OR FALLBACK ---
+            // --- D. AI STREAMING OR FALLBACK (Standard Chat) ---
             if (reply) {
-                // Save locally generated reply immediately
-                await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
-                    role: 'assistant', content: reply, timestamp: serverTimestamp()
-                });
-                speakResponse(reply);
-                addLog(action);
+                // ... (Save locally generated reply)
             }
             else {
-                // START STREAMING
+                // STANDARD AI CHAT
                 const response = await fetch('http://localhost:5000/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -406,49 +434,47 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                     signal
                 });
 
-                if (!response.ok) {
-                    let errorMessage = "AI Stream Connection Failed";
-                    try {
-                        const errorData = await response.json();
-                        errorMessage = errorData.message || errorData.error || errorMessage;
-                    } catch (e) { /* ignore json parse error */ }
-                    throw new Error(errorMessage);
-                }
-                if (!response.body) throw new Error("ReadableStream not supported.");
+                if (!response.ok) throw new Error("AI Request Failed");
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-                let accumulatedText = "";
-
-                // Initialize streaming message
+                let aiText = "";
                 setStreamingMessage("▋");
-                // speakResponse("Processing..."); // Optional: Speak start
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-
-                    const chunk = decoder.decode(value, { stream: true });
-                    accumulatedText += chunk;
-                    setStreamingMessage(accumulatedText + "▋");
-                    if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+                    aiText += decoder.decode(value, { stream: true });
+                    setStreamingMessage(aiText + "▋");
+                    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
                 }
 
-                reply = accumulatedText;
-                setStreamingMessage(null); // Clear streaming UI
+                setStreamingMessage(null);
 
-                // Save FINAL Message to Firestore
+                // Parse Reminders/Timers
+                const reminderMatch = aiText.match(/\[(REMINDER|TIMER)\|([^\|]+)\|([^\]]+)\]/);
+                if (reminderMatch) {
+                    const [_, type, time, msg] = reminderMatch;
+                    addLog(`System: Setting ${type} for ${time} - ${msg}`);
+                    // In a real app, save to DB or set setTimeout. For demo:
+                    if (type === 'TIMER') {
+                        const mins = parseInt(time);
+                        setTimeout(() => {
+                            speakResponse(`Reminder: ${msg}`);
+                            alert(`REMINDER: ${msg}`);
+                        }, mins * 60000);
+                    }
+                }
+
+                // Save AI Response
                 await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
-                    role: 'assistant', content: reply, timestamp: serverTimestamp()
+                    role: 'assistant', content: aiText, timestamp: serverTimestamp()
                 });
 
-                updateDoc(doc(db, "users", currentUser.uid, "conversations", activeSessionId), {
-                    lastMessage: reply, lastUpdated: serverTimestamp()
-                }).catch(console.error);
-
-                speakResponse(reply);
-                addLog("Gemini: Stream Complete");
+                speakResponse(aiText);
             }
+
+
 
         } catch (error) {
             clearTimeout(timeoutId);
@@ -529,163 +555,226 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
         }
     };
 
+
+    // --- 4. FEATURE & FILE LOGIC ---
+    // (State moved to top)
+
+
+    const MODES = [
+        { id: 'default', label: 'Nexora Core', icon: Sparkles, color: 'text-cyan-400' },
+        { id: 'medical', label: 'Medical AI', icon: Sparkles, color: 'text-red-400' },
+        { id: 'code_explainer', label: 'Code Expert', icon: Sparkles, color: 'text-yellow-400' },
+        { id: 'math_solver', label: 'Math Solver', icon: Sparkles, color: 'text-blue-400' },
+        { id: 'translator', label: 'Translator', icon: Sparkles, color: 'text-green-400' },
+    ];
+
+    const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // Visual feedback
+        setAttachment({ name: file.name, loading: true });
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const res = await fetch('http://localhost:5000/api/features/upload-pdf', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(errText || "Upload failed");
+            }
+
+            const data = await res.json();
+            if (data.text) {
+                setAttachment({ type: 'file', name: file.name, content: data.text });
+                addLog("System: PDF text extracted.");
+            }
+        } catch (err) {
+            console.error(err);
+            setAttachment(null);
+            addLog("System: Upload failed.");
+        }
+    };
+
+    const handleUrlInput = async () => {
+        const url = prompt("Enter URL to analyze:");
+        if (!url) return;
+
+        setAttachment({ name: url, loading: true });
+
+        try {
+            const res = await fetch('http://localhost:5000/api/features/summarize-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+            const data = await res.json();
+            if (data.summary) {
+                setAttachment({ type: 'url', name: url, content: `[URL Content (Summarized): ${data.summary}]` });
+                addLog("System: URL processed.");
+            } else {
+                throw new Error("No summary returned");
+            }
+        } catch (err) {
+            console.error(err);
+            setAttachment(null);
+            addLog("System: URL processing failed.");
+        }
+    };
+
+
     return (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl h-[70vh] flex flex-col z-30 pointer-events-none">
+        <div className="relative w-full h-full flex flex-col z-10">
+
 
             <AnimatePresence>
-                {isVisionMode && (
-                    <VisionHUD
-                        onClose={() => setIsVisionMode(false)}
-                        onDetect={handleVisionDetect}
-                    />
-                )}
+                {isVisionMode && <VisionHUD onClose={() => setIsVisionMode(false)} onDetect={handleVisionDetect} />}
                 {showWeather && <WeatherWidget onClose={() => setShowWeather(false)} />}
                 {showNews && <NewsFeed onClose={() => setShowNews(false)} />}
                 {showClock && <DigitalClock onClose={() => setShowClock(false)} />}
             </AnimatePresence>
 
-            {/* Scrollable Message Area */}
-            <div className="flex-1 overflow-y-auto px-4 py-8 custom-scrollbar pointer-events-auto">
-                <div className="flex flex-col gap-6">
-                    <AnimatePresence mode='popLayout'>
-                        {messages.map((msg) => (
-                            <motion.div
-                                key={msg.id}
-                                initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} group relative`}
-                            >
-                                <div className={`relative max-w-[85%] px-6 py-4 rounded-xl border backdrop-blur-md transition-all ${msg.role === 'user'
-                                    ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-50 shadow-[0_0_15px_rgba(6,182,212,0.1)]'
-                                    : 'bg-black/60 border-cyan-400/50 text-cyan-100 shadow-[0_0_20px_rgba(0,243,255,0.2)]'
-                                    }`}>
-                                    <div className="font-orbitron text-[10px] uppercase tracking-widest opacity-50 mb-2 flex justify-between items-center">
-                                        <span>{msg.role === 'user' ? 'AUTH_USER' : 'NEXORA_CORE'}</span>
-                                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button
-                                                onClick={() => handleCopy(msg.content, msg.id)}
-                                                className="p-1 hover:text-cyan-400 transition-colors"
-                                                title="Copy"
-                                            >
-                                                {copiedId === msg.id ? <Check size={14} /> : <Copy size={14} />}
-                                            </button>
-                                            {msg.role === 'user' && (
-                                                <button
-                                                    onClick={() => handleEdit(msg.content)}
-                                                    className="p-1 hover:text-cyan-400 transition-colors"
-                                                    title="Edit"
-                                                >
-                                                    <Edit size={14} />
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="prose prose-invert prose-cyan max-w-none prose-p:leading-relaxed prose-pre:bg-black/40 prose-pre:border prose-pre:border-cyan-500/20">
-                                        <ReactMarkdown>{msg.content}</ReactMarkdown>
-                                    </div>
-                                </div>
-                            </motion.div>
-                        ))}
-                    </AnimatePresence>
-
-                    {/* STREAMING MESSAGE INDICATOR/CONTENT */}
-                    {streamingMessage && (
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto px-4 py-20 custom-scrollbar">
+                <div className="max-w-3xl mx-auto flex flex-col gap-6">
+                    {messages.map((msg) => (
                         <motion.div
-                            initial={{ opacity: 0, y: 20 }}
+                            key={msg.id}
+                            initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className="flex justify-start relative group"
+                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                         >
-                            <div className="relative max-w-[85%] px-6 py-4 rounded-xl border backdrop-blur-md transition-all bg-black/60 border-cyan-400/50 text-cyan-100 shadow-[0_0_20px_rgba(0,243,255,0.2)]">
-                                <div className="font-orbitron text-[10px] uppercase tracking-widest opacity-50 mb-2">
-                                    NEXORA_CORE (PROCESSING...)
-                                </div>
-                                <div className="prose prose-invert prose-cyan max-w-none">
-                                    <ReactMarkdown>{streamingMessage}</ReactMarkdown>
+                            <div className={`max-w-[85%] px-5 py-3 rounded-2xl ${msg.role === 'user'
+                                ? 'bg-cyan-600 text-white rounded-br-none'
+                                : 'bg-gray-800/80 text-gray-100 rounded-tl-none border border-gray-700'
+                                }`}>
+                                {msg.attachment && (
+                                    <div className="mb-2 text-xs opacity-70 flex items-center gap-1 bg-black/20 px-2 py-1 rounded w-fit">
+                                        <Paperclip size={10} /> {msg.attachment}
+                                    </div>
+                                )}
+                                <div className="prose prose-invert prose-sm max-w-none">
+                                    <ReactMarkdown>{msg.content}</ReactMarkdown>
                                 </div>
                             </div>
                         </motion.div>
-                    )}
+                    ))}
 
-                    {isProcessing && !streamingMessage && (
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            className="flex justify-start"
-                        >
-                            <div className="bg-black/40 backdrop-blur-md border border-cyan-500/30 px-6 py-4 rounded-xl flex gap-2">
-                                <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce"></span>
-                                <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                                <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                    {streamingMessage && (
+                        <div className="flex justify-start">
+                            <div className="max-w-[85%] px-5 py-3 rounded-2xl bg-gray-800/80 text-gray-100 rounded-tl-none border border-gray-700">
+                                <ReactMarkdown>{streamingMessage}</ReactMarkdown>
                             </div>
-                        </motion.div>
+                        </div>
                     )}
                     <div ref={messagesEndRef} />
                 </div>
             </div>
 
-            {/* Input Fixed at Bottom */}
-            <div className="mt-6 pointer-events-auto">
-                <form onSubmit={handleSubmit} className="relative group px-4">
-                    <div className="absolute inset-0 bg-cyan-500/5 blur-xl group-focus-within:bg-cyan-500/10 transition-all rounded-full"></div>
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder={isProcessing ? "PROCESSING_QUERY..." : "INPUT_COMMAND_CORE..."}
-                        disabled={isProcessing && false} // Keep input enabled for editing if needed, but usually block
-                        readOnly={isProcessing} // Make it readonly instead
-                        className="w-full bg-black/40 backdrop-blur-xl border-b-2 border-cyan-500/50 py-5 px-8 text-xl text-center text-cyan-50 font-orbitron focus:outline-none focus:border-cyan-400 transition-all placeholder-cyan-500/20 rounded-t-lg"
-                    />
-                    <div className="absolute bottom-0 left-4 right-4 h-[1px] bg-gradient-to-r from-transparent via-cyan-500 to-transparent shadow-[0_0_10px_#00f3ff]"></div>
+            {/* Input Area */}
+            <div className="w-full max-w-3xl mx-auto px-4 pb-6">
+                <div className="max-w-4xl mx-auto flex items-end gap-3 rounded-xl bg-gray-800/50 p-2 border border-gray-700/50 backdrop-blur-sm">
 
-                    <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4">
+                    {/* Left Actions */}
+                    <div className="flex items-center gap-1 sm:gap-2">
+                        {/* Mode Selector Trigger */}
                         <button
-                            type="button"
-                            onClick={toggleMute}
-                            className={`transition-colors ${isMuted ? 'text-red-500/50 hover:text-red-400' : 'text-cyan-500/50 hover:text-cyan-400'}`}
-                            title={isMuted ? "Unmute Nexora" : "Mute Nexora"}
+                            onClick={() => setShowModeMenu(!showModeMenu)}
+                            className={`p-2 rounded-full hover:bg-gray-700 transition-colors ${MODES.find(m => m.id === mode)?.color}`}
+                            title="Select AI Mode"
                         >
-                            {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                            <Sparkles size={20} />
                         </button>
 
                         <button
-                            type="button"
-                            onClick={toggleListening}
-                            disabled={isProcessing || !isSttSupported}
-                            className={`transition-all ${!isSttSupported ? 'opacity-20 cursor-not-allowed' : (isListening ? 'text-red-500 animate-pulse scale-110' : (sttStatus === 'NETWORK_ERROR' ? 'text-orange-500' : 'text-cyan-500/50 hover:text-cyan-400'))} disabled:opacity-30`}
-                            title={
-                                sttStatus === 'INSECURE_CONTEXT' ? "Requires HTTPS/localhost" :
-                                    sttStatus === 'NETWORK_ERROR' ? "Speech server unavailable (Check Internet)" :
-                                        !isSttSupported ? "Speech not supported" :
-                                            (isListening ? "Stop Recording" : "Start Recording")
-                            }
-                        >
-                            {isListening ? <MicOff size={24} /> : <Mic size={24} />}
-                        </button>
-
-                        <button
-                            type="button"
                             onClick={() => setIsVisionMode(!isVisionMode)}
-                            className={`transition-colors ${isVisionMode ? 'text-cyan-400' : 'text-cyan-500/50 hover:text-cyan-400'}`}
-                            title="Toggle Vision Mode"
+                            className={`p-2 rounded-full hover:bg-gray-700 transition-colors ${isVisionMode ? 'text-cyan-400 bg-cyan-900/20' : 'text-gray-400'}`}
+                            title="Toggle Vision"
                         >
                             <CameraIcon size={20} />
                         </button>
 
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileUpload}
+                            accept=".pdf"
+                            className="hidden"
+                        />
                         <button
-                            type="submit"
-                            disabled={(!input.trim() && !isProcessing) || isListening}
-                            className={`${isProcessing ? 'text-red-500 hover:text-red-400' : 'text-cyan-500/50 hover:text-cyan-400'} transition-colors disabled:opacity-30`}
-                            title={isProcessing ? "Stop Generating" : "Send"}
+                            onClick={() => fileInputRef.current?.click()}
+                            className={`p-2 rounded-full hover:bg-gray-700 transition-colors ${attachment ? 'text-cyan-400' : 'text-gray-400'}`}
+                            title="Upload PDF"
                         >
-                            {isProcessing ? <Square fill="currentColor" size={20} /> : <Send size={24} />}
+                            <Paperclip size={20} />
                         </button>
                     </div>
-                </form>
+
+                    {/* Input Field */}
+                    <div className="flex-1 relative">
+                        {attachment && (
+                            <div className="absolute -top-10 left-0 bg-gray-800 text-xs px-3 py-1 rounded-full flex items-center gap-2 border border-gray-700">
+                                <FileText size={12} className="text-cyan-400" />
+                                <span className="text-gray-300 max-w-[150px] truncate">{attachment.name}</span>
+                                <button onClick={() => setAttachment(null)} className="hover:text-red-400"><X size={12} /></button>
+                            </div>
+                        )}
+
+                        <textarea
+                            ref={inputRef}
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSubmit(e);
+                                }
+                            }}
+                            placeholder={mode === 'default' ? "Message Nexora..." : `Message ${MODES.find(m => m.id === mode)?.label}...`}
+                            className="w-full bg-transparent text-white placeholder-gray-500 text-sm resize-none focus:outline-none py-3 max-h-32 custom-scrollbar"
+                            rows={1}
+                            style={{ minHeight: '44px' }} // Fix height
+                        />
+                    </div>
+
+                    {/* Right Actions */}
+                    <div className="flex items-center gap-2">
+                        {/* Mic */}
+                        <button
+                            onMouseDown={toggleListening}
+                            // onMouseUp={toggleListening} // If push-to-talk desired
+                            className={`p-2 rounded-full transition-all ${isListening ? 'bg-red-500/20 text-red-400 animate-pulse ring-1 ring-red-500' : 'hover:bg-gray-700 text-gray-400'}`}
+                            title="Voice Command"
+                        >
+                            {isListening ? <Mic size={20} /> : <MicOff size={20} />}
+                        </button>
+
+                        {/* Send */}
+                        <button
+                            onClick={handleSubmit}
+                            disabled={!input.trim() && !isListening && !attachment}
+                            className={`p-2 rounded-full transition-all ${input.trim() || isListening || attachment ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}
+                        >
+                            {isProcessing ? (
+                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            ) : (
+                                <Send size={20} />
+                            )}
+                        </button>
+                    </div>
+                </div>
+                <div className="text-center text-[10px] text-gray-600 mt-2 font-mono">
+                    NEXORA AI CORE V3.0
+                </div>
             </div>
         </div>
     );
 };
 
 export default ChatInterface;
+

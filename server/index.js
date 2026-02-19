@@ -20,8 +20,13 @@ if (!process.env.OPENROUTER_API_KEY) {
     console.log("IDENTITY_VERIFIED: OpenRouter AI Core Ready.");
 }
 
+import featureRouter from './features/router.js';
+
 app.use(cors());
 app.use(express.json());
+
+// Mount Feature Router
+app.use('/api/features', featureRouter);
 
 const client = new OpenAI({
     baseURL: "https://openrouter.ai/api/v1",
