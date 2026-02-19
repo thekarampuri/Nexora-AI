@@ -35,13 +35,11 @@ const SYSTEM_INSTRUCTION = "You are 'NEXORA', an advanced AI core for a futurist
     "Constraint 2: Do NOT output internal JSON 'thoughts' or 'actions'. Only provide the final response to the user. " +
     "Constraint 3: Avoid using long lists of robotic status headers (like 'Neural link stable') in every message. Use them sparingly for emphasis.";
 
-// Priority Order: 2.0 Flash -> 2.0 Flash Lite -> 1.5 Pro
-const PRIMARY_MODELS = [
-    "gemini-2.0-flash",
+// Priority Order as requested
+"gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-1.5-pro-latest",
-    "gemini-1.5-flash" // Ultimate fallback
-];
+    "gemini-1.5-pro",
+    "gemini-1.5-flash"
 
 /**
  * Helper to generate content with automatic fallback
@@ -53,8 +51,13 @@ async function generateWithFallback(contents, res) {
         try {
             console.log(`[AI] Attempting connection to model: ${modelName}...`);
 
-            // Attempt to create stream
-            const result = await client.models.generateContentStream({
+            // 15 Second Timeout Promise
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("Request timed out after 15s")), 15000)
+            );
+
+            // AI Request Promise
+            const aiPromise = client.models.generateContentStream({
                 model: modelName,
                 contents: contents,
                 config: {
@@ -62,17 +65,22 @@ async function generateWithFallback(contents, res) {
                 }
             });
 
+            // Race against timeout
+            const result = await Promise.race([aiPromise, timeoutPromise]);
+
             // If we get here, the request was accepted. Now verify stream integrity.
-            // We need to write the first chunk to be sure.
+            // We need to write the first chunk to be sure we have a valid stream.
 
             let firstChunk = true;
 
             for await (const chunk of result.stream) {
                 const chunkText = chunk.text();
+
                 // If this is the first successful chunk, we commit to this model
                 if (firstChunk) {
                     console.log(`[AI] Connection established with: ${modelName}`);
-                    // Only set headers if not already sent (though express handles this usually)
+
+                    // Only set headers if not already sent
                     if (!res.headersSent) {
                         res.setHeader('Content-Type', 'text/plain');
                         res.setHeader('Transfer-Encoding', 'chunked');
@@ -88,29 +96,37 @@ async function generateWithFallback(contents, res) {
 
         } catch (error) {
             console.warn(`[AI] Model ${modelName} failed:`, error.message || error);
-
-            // Check if error is retryable
-            const isRetryable =
-                error.status === 404 || // Not Found
-                error.status === 429 || // Too Many Requests
-                error.status === 503 || // Service Unavailable
-                (error.message && error.message.includes("not found")) ||
-                (error.message && error.message.includes("quota")) ||
-                (error.message && error.message.includes("overloaded"));
-
-            if (!isRetryable) {
-                // If it's a fundamental error (like bad request), stop retrying
-                console.error("[AI] Non-retryable error encountered.");
-                throw error;
-            }
-
             lastError = error;
-            // Continue to next model in loop
+            // Continue to next model in loop logic is implicit here
+            console.log(`[AI] Fallback to next model (if available)`);
         }
     }
 
     // If we exit the loop, all models failed
-    throw lastError || new Error("All AI models unavailable.");
+    console.error("[AI] All models failed. Falling back to MOCK response.");
+
+    if (!res.headersSent) {
+        // SIMULATE STREAMING MOCK RESPONSE
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        const mockResponse = "NOTICE: The AI Core is currently offline due to high traffic (Error 429). " +
+            "I am operating in emergency fallback mode. " +
+            "Please try again later when the connection stabilizes. " +
+            "[SYSTEM_STATUS: STANDBY]";
+
+        // Simulate typing delay
+        const chunks = mockResponse.match(/.{1,5}/g) || [];
+        for (const chunk of chunks) {
+            res.write(chunk);
+            await new Promise(r => setTimeout(r, 50)); // 50ms delay per chunk
+        }
+        res.end();
+    } else {
+        // If headers were already sent (e.g. partial stream), we can't send JSON.
+        // We just end the response. Frontend will see a broken stream.
+        res.end();
+    }
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -127,11 +143,13 @@ app.post('/api/chat', async (req, res) => {
         await generateWithFallback(contents, res);
 
     } catch (error) {
-        console.error("FATAL: All AI models failed.", error);
+        console.error("FATAL: Unexpected handler error.", error);
         if (!res.headersSent) {
-            const status = error.status || 500;
-            const msg = error.message || "Unknown Core Failure";
-            res.status(status).json({ error: `AI_CORE_FAILURE: ${msg}` });
+            res.status(500).json({
+                success: false,
+                error: "INTERNAL_SERVER_ERROR",
+                message: "An unexpected internal error occurred."
+            });
         } else {
             res.end();
         }

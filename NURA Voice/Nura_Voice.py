@@ -21,7 +21,9 @@ from PIL import Image, ImageTk ,ImageSequence
 from bs4 import BeautifulSoup  # (Not used now, kept for potential future use)
 
 # API settings for AI-generated content
-API_KEY = "AIzaSyBm4jyzprdLKH38O3jzePOhEZUZGtPOPxI"
+API_KEY = os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    print("WARNING: GEMINI_API_KEY not found in environment variables.")
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
 
 # SerpApi key for image search (replace with your actual key)
