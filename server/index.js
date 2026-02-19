@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from 'openai';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -14,17 +14,22 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 const app = express();
 const port = process.env.PORT || 5000;
 
-if (!process.env.VITE_GEMINI_API_KEY) {
-    console.error("FATAL: AI_CORE_IDENTITY_NOT_FOUND. Check .env in root.");
+if (!process.env.OPENROUTER_API_KEY) {
+    console.error("FATAL: AI_CORE_IDENTITY_NOT_FOUND. Check .env in root for OPENROUTER_API_KEY.");
 } else {
-    console.log("IDENTITY_VERIFIED: Gemini 3 Core Ready.");
+    console.log("IDENTITY_VERIFIED: OpenRouter AI Core Ready.");
 }
 
 app.use(cors());
 app.use(express.json());
 
-const client = new GoogleGenAI({
-    apiKey: process.env.VITE_GEMINI_API_KEY
+const client = new OpenAI({
+    baseURL: "https://openrouter.ai/api/v1",
+    apiKey: process.env.OPENROUTER_API_KEY,
+    defaultHeaders: {
+        "HTTP-Referer": "http://localhost:5000", // Optional, for including your app on openrouter.ai rankings.
+        "X-Title": "Nexora AI", // Optional. Shows in rankings on openrouter.ai.
+    }
 });
 
 // --- MODEL CONFIGURATION ---
@@ -35,17 +40,17 @@ const SYSTEM_INSTRUCTION = "You are 'NEXORA', an advanced AI core for a futurist
     "Constraint 2: Do NOT output internal JSON 'thoughts' or 'actions'. Only provide the final response to the user. " +
     "Constraint 3: Avoid using long lists of robotic status headers (like 'Neural link stable') in every message. Use them sparingly for emphasis.";
 
-// Priority Order as requested
+// Priority Order as requested - using OpenRouter model IDs
 const PRIMARY_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-flash-latest"
+    "google/gemini-2.0-flash-001",
+    "google/gemini-pro-1.5",
+    "openai/gpt-3.5-turbo" // Fallback to GPT-3.5 if Gemini fails
 ];
 
 /**
  * Helper to generate content with automatic fallback
  */
-async function generateWithFallback(contents, res) {
+async function generateWithFallback(messages, res) {
     let lastError = null;
 
     for (const modelName of PRIMARY_MODELS) {
@@ -58,30 +63,32 @@ async function generateWithFallback(contents, res) {
             );
 
             // AI Request Promise
-            const aiPromise = client.models.generateContentStream({
+            const aiPromise = client.chat.completions.create({
                 model: modelName,
-                contents: contents,
-                config: {
-                    systemInstruction: SYSTEM_INSTRUCTION
-                }
+                messages: [
+                    { role: "system", content: SYSTEM_INSTRUCTION },
+                    ...messages
+                ],
+                stream: true,
             });
 
             // Race against timeout
-            const result = await Promise.race([aiPromise, timeoutPromise]);
+            const stream = await Promise.race([aiPromise, timeoutPromise]);
 
             // If we get here, the request was accepted. Now verify stream integrity.
             // We need to write the first chunk to be sure we have a valid stream.
 
             let firstChunk = true;
 
-            // Handle potentially different SDK response structures
-            const stream = result.stream || result;
-
             for await (const chunk of stream) {
-                const chunkText = chunk.text();
+                const chunkText = chunk.choices[0]?.delta?.content || "";
+
+                // Skip empty chunks (common in some streams)
+                if (!chunkText && !firstChunk) continue;
 
                 // If this is the first successful chunk, we commit to this model
                 if (firstChunk) {
+                    // Even if chunkText is empty, getting a valid stream response means connection is established
                     console.log(`[AI] Connection established with: ${modelName}`);
 
                     // Only set headers if not already sent
@@ -91,7 +98,10 @@ async function generateWithFallback(contents, res) {
                     }
                     firstChunk = false;
                 }
-                res.write(chunkText);
+
+                if (chunkText) {
+                    res.write(chunkText);
+                }
             }
 
             // If we finished the loop without error, we are done.
@@ -114,10 +124,9 @@ async function generateWithFallback(contents, res) {
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Transfer-Encoding', 'chunked');
 
-        const mockResponse = "NOTICE: The AI Core is currently offline due to high traffic (Error 429). " +
-            "I am operating in emergency fallback mode. " +
-            "Please try again later when the connection stabilizes. " +
-            "[SYSTEM_STATUS: STANDBY]";
+        const mockResponse = "NOTICE: The AI Core is currently offline. " +
+            "Emergency protocols active. Please try again later. " +
+            "[SYSTEM_STATUS: OFFLINE]";
 
         // Simulate typing delay
         const chunks = mockResponse.match(/.{1,5}/g) || [];
@@ -141,10 +150,11 @@ app.post('/api/chat', async (req, res) => {
             return res.status(400).json({ error: "Message is required" });
         }
 
-        const contents = [{ role: 'user', parts: [{ text: message }] }];
+        // Convert user message to OpenRouter/OpenAI message format
+        const messages = [{ role: 'user', content: message }];
 
         // Execute fallback logic
-        await generateWithFallback(contents, res);
+        await generateWithFallback(messages, res);
 
     } catch (error) {
         console.error("FATAL: Unexpected handler error.", error);
