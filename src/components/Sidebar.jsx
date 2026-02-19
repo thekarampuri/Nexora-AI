@@ -93,7 +93,8 @@ const Sidebar = ({ currentSessionId, onSessionSelect, isOpen, setIsOpen }) => {
 
                                         {/* Hover Actions */}
                                         {currentSessionId === session.id && !editingId && (
-                                            <div className="absolute right-2 flex items-center bg-gray-800 pl-2 shadow-[-10px_0_10px_#1f2937]"> // Gradient fade effect
+                                            <div className="absolute right-2 flex items-center bg-gray-800 pl-2 shadow-[-10px_0_10px_#1f2937]">
+                                                {/* Gradient fade effect */}
                                                 <Edit2 size={14} className="text-gray-400 hover:text-white mr-2" onClick={(e) => startEdit(e, session)} />
                                                 <Trash2 size={14} className="text-gray-400 hover:text-red-400" onClick={(e) => handleDelete(e, session.id)} />
                                             </div>

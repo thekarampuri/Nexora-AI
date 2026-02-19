@@ -6,7 +6,7 @@ import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, u
 import {
     Send, Mic, MicOff, Paperclip, Camera as CameraIcon, X, Sparkles, ChevronDown, Link as LinkIcon,
     HeartPulse, Code, Calculator, Languages, BrainCircuit, Image, CloudSun, Globe, Cpu, DollarSign, FileText,
-    Square
+    Square, Volume2, VolumeX, Copy, Edit2
 } from 'lucide-react';
 import VisionHUD from './VisionHUD';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -465,8 +465,6 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
                 }
 
-                setStreamingMessage(null);
-
                 // Parse Reminders/Timers
                 const reminderMatch = aiText.match(/\[(REMINDER|TIMER)\|([^\|]+)\|([^\]]+)\]/);
                 if (reminderMatch) {
@@ -479,6 +477,40 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                             speakResponse(`Reminder: ${msg}`);
                             alert(`REMINDER: ${msg}`);
                         }, mins * 60000);
+                    }
+                }
+
+                // Parse Automation Commands (Robust Regex)
+                const autoMatch = aiText.match(/\[\s*AUTOMATION\s*\|\s*([^\|]+)\s*\|\s*([^\|]+)\s*\|\s*([^\]]+)\s*\]/i);
+                if (autoMatch) {
+                    const [_, service, action, data] = autoMatch;
+                    const cleanData = data.trim();
+                    const cleanAction = action.trim().toLowerCase();
+                    const cleanService = service.trim().toUpperCase();
+
+                    addLog(`System: Executing ${cleanService} - ${cleanAction}`);
+                    const PYTHON_API = 'http://localhost:5001';
+                    const headers = { 'Content-Type': 'application/json' };
+
+                    try {
+                        if (cleanService === 'APP') {
+                            await fetch(`${PYTHON_API}/api/app/launch`, { method: 'POST', headers, body: JSON.stringify({ app_name: cleanData }) });
+                        } else if (cleanService === 'WEB') {
+                            if (cleanAction === 'search') {
+                                await fetch(`${PYTHON_API}/api/web/search`, { method: 'POST', headers, body: JSON.stringify({ query: cleanData }) });
+                            } else {
+                                await fetch(`${PYTHON_API}/api/web/open`, { method: 'POST', headers, body: JSON.stringify({ url: cleanData }) });
+                            }
+                        } else if (cleanService === 'YOUTUBE') {
+                            await fetch(`${PYTHON_API}/api/automation/youtube`, { method: 'POST', headers, body: JSON.stringify({ action: 'search_play', query: cleanData }) });
+                        } else if (cleanService === 'SYSTEM') {
+                            await fetch(`${PYTHON_API}/api/system/command`, { method: 'POST', headers, body: JSON.stringify({ action: cleanData }) }); // up/down/mute
+                        } else if (cleanService === 'MEDIA') {
+                            await fetch(`${PYTHON_API}/api/system/command`, { method: 'POST', headers, body: JSON.stringify({ action: cleanData }) }); // play/pause/next
+                        }
+                    } catch (e) {
+                        console.error("Automation Failed", e);
+                        addLog("System: Automation failed to execute.");
                     }
                 }
 
@@ -670,12 +702,13 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                             key={msg.id}
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                            className={`flex w-full group ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                         >
-                            <div className={`max-w-[85%] px-5 py-3 rounded-2xl ${msg.role === 'user'
+                            <div className={`relative max-w-[85%] px-5 py-3 rounded-2xl ${msg.role === 'user'
                                 ? 'bg-cyan-600 text-white rounded-br-none'
                                 : 'bg-gray-800/80 text-gray-100 rounded-tl-none border border-gray-700'
                                 }`}>
+
                                 {msg.attachment && (
                                     <div className="mb-2 text-xs opacity-70 flex items-center gap-1 bg-black/20 px-2 py-1 rounded w-fit">
                                         <Paperclip size={10} /> {msg.attachment}
@@ -683,6 +716,18 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                                 )}
                                 <div className="prose prose-invert prose-sm max-w-none">
                                     <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                </div>
+
+                                {/* Action Buttons (Visible on Hover) */}
+                                <div className={`absolute -bottom-6 ${msg.role === 'user' ? 'right-0' : 'left-0'} flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 rounded-full px-2 py-1`}>
+                                    <button onClick={() => handleCopy(msg.content, msg.id)} className="text-gray-400 hover:text-cyan-400 p-1" title="Copy">
+                                        {copiedId === msg.id ? <span className="text-xs text-green-400">Copied</span> : <Copy size={12} />}
+                                    </button>
+                                    {msg.role === 'user' && (
+                                        <button onClick={() => handleEdit(msg.content)} className="text-gray-400 hover:text-yellow-400 p-1" title="Edit">
+                                            <Edit2 size={12} />
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </motion.div>
@@ -816,6 +861,15 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
 
                     {/* Right Actions */}
                     <div className="flex items-center gap-2">
+                        {/* Sound Toggle */}
+                        <button
+                            onClick={toggleMute}
+                            className={`p-2 rounded-full transition-colors ${isMuted ? 'text-red-400 hover:bg-red-500/20' : 'text-cyan-400 hover:bg-cyan-500/20'}`}
+                            title={isMuted ? "Unmute AI" : "Mute AI"}
+                        >
+                            {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                        </button>
+
                         {/* Mic */}
                         <button
                             onMouseDown={toggleListening}
