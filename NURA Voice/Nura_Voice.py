@@ -1,5 +1,6 @@
 import os
 import re
+from dotenv import load_dotenv
 import time
 import platform
 import subprocess
@@ -20,8 +21,11 @@ from tkinter import scrolledtext, messagebox
 from PIL import Image, ImageTk ,ImageSequence
 from bs4 import BeautifulSoup  # (Not used now, kept for potential future use)
 
+# Load environment variables
+load_dotenv()
+
 # API settings for AI-generated content
-API_KEY = os.getenv("GEMINI_API_KEY")
+API_KEY = os.getenv("VITE_GEMINI_API_KEY")
 if not API_KEY:
     print("WARNING: GEMINI_API_KEY not found in environment variables.")
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
