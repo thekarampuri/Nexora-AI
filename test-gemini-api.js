@@ -1,7 +1,9 @@
 // Simple Gemini API Test using the same package as server
 import { GoogleGenAI } from "@google/genai";
 
-const API_KEY = "AIzaSyBa9wo5V5xeS6V9fXmPeRnasaGudPZyEm8";
+import dotenv from 'dotenv';
+dotenv.config();
+const API_KEY = process.env.VITE_GEMINI_API_KEY;
 
 console.log("🧪 Testing NEXORA Gemini API Connection...\n");
 console.log(`API Key: ${API_KEY.substring(0, 10)}...`);

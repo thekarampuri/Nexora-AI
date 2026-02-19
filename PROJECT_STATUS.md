@@ -50,7 +50,7 @@ start_nexora.bat
 
 ### 🤖 Gemini API Status
 
-**Current API Key:** AIzaSyBa9wo5V5xeS6V9fXmPeRnasaGudPZyEm8
+**Current API Key:** [SECURED]
 
 **Model:** gemini-2.0-flash-exp (latest experimental model)
 

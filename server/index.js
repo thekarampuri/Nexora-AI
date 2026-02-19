@@ -36,10 +36,11 @@ const SYSTEM_INSTRUCTION = "You are 'NEXORA', an advanced AI core for a futurist
     "Constraint 3: Avoid using long lists of robotic status headers (like 'Neural link stable') in every message. Use them sparingly for emphasis.";
 
 // Priority Order as requested
-"gemini-2.0-flash",
+const PRIMARY_MODELS = [
+    "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash"
+    "gemini-flash-latest"
+];
 
 /**
  * Helper to generate content with automatic fallback

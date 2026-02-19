@@ -10,10 +10,19 @@ import pyttsx3
 import re
 import subprocess
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # -------------------------------
 # Configure Gemini API and Theme
 # -------------------------------
-genai.configure(api_key="AIzaSyBm4jyzprdLKH38O3jzePOhEZUZGtPOPxI")
+api_key = os.getenv("VITE_GEMINI_API_KEY")
+if not api_key:
+    print("Error: VITE_GEMINI_API_KEY not found in environment variables.")
+
+genai.configure(api_key=api_key)
 model = genai.GenerativeModel("gemini-2.0-flash-001")
 
 ctk.set_appearance_mode("Dark")  # Attractive dark mode
