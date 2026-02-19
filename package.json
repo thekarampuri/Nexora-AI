@@ -15,7 +15,9 @@
   "dependencies": {
     "@google/genai": "^1.42.0",
     "@google/generative-ai": "^0.24.1",
+    "cors": "^2.8.6",
     "dotenv": "^17.3.1",
+    "express": "^5.2.1",
     "firebase": "^12.9.0",
     "framer-motion": "^12.27.0",
     "lucide-react": "^0.562.0",
