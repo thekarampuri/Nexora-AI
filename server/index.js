@@ -74,7 +74,10 @@ async function generateWithFallback(contents, res) {
 
             let firstChunk = true;
 
-            for await (const chunk of result.stream) {
+            // Handle potentially different SDK response structures
+            const stream = result.stream || result;
+
+            for await (const chunk of stream) {
                 const chunkText = chunk.text();
 
                 // If this is the first successful chunk, we commit to this model
