@@ -2,64 +2,48 @@ import React, { useState } from 'react';
 import Navbar from './Navbar';
 import ChatInterface from './ChatInterface';
 import Sidebar from './Sidebar';
+import { useAuth } from '../context/AuthContext';
+import { Settings, LayoutDashboard, FileText, Zap, Menu, LogOut } from 'lucide-react';
+import LightPillar from './LightPillar';
 import SmartDevices from './SmartDevices';
 import Logs from './Logs';
-import { useAuth } from '../context/AuthContext';
-import hudVideo from '../assets/hud_bg.mp4';
-import { LogOut, Menu } from 'lucide-react';
-import LiquidEther from './LiquidEther';
+// import SettingsPanel from './SettingsPanel';
+
 
 const HUD = () => {
     const { currentUser, logout } = useAuth();
     const [activeTab, setActiveTab] = useState('dashboard');
     const [currentSessionId, setCurrentSessionId] = useState(null);
-    const [isMobileOpen, setIsMobileOpen] = useState(false);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true); // Default open on desktop? Or closed? ChatGPT defaults open on large screens usually.
 
     return (
         <div className="relative w-screen h-screen overflow-hidden bg-black flex">
 
-            {/* 1. Background Video Layer */}
+            {/* 1. Background Layer (LightPillar) */}
             <div className="absolute inset-0 z-0">
-                <video
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    className="w-full h-full object-cover opacity-30"
-                >
-                    <source src={hudVideo} type="video/mp4" />
-                </video>
-                <div className="absolute inset-0 bg-black/20 bg-[radial-gradient(circle_at_center,_transparent_0%,_#000000_100%)]"></div>
-                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150"></div>
-
-                {/* LiquidEther Overlay */}
-                <div className="absolute inset-0 opacity-60 mix-blend-screen pointer-events-none">
-                    <LiquidEther
-                        colors={['#06b6d4', '#8b5cf6', '#00f3ff']}
-                        mouseForce={20}
-                        cursorSize={100}
-                        isViscous
-                        viscous={30}
-                        iterationsViscous={32}
-                        iterationsPoisson={32}
-                        resolution={0.5}
-                        isBounce={false}
-                        autoDemo
-                        autoSpeed={0.5}
-                        autoIntensity={2.2}
-                        takeoverDuration={0.25}
-                        autoResumeDelay={3000}
-                        autoRampDuration={0.6}
-                    />
-                </div>
+                <LightPillar
+                    className="w-full h-full"
+                    topColor="#5227FF"
+                    bottomColor="#FF9FFC"
+                    intensity={1.0}
+                    rotationSpeed={0.3}
+                    glowAmount={0.002}
+                    pillarWidth={3.0}
+                    pillarHeight={0.4}
+                    noiseIntensity={0.5}
+                    pillarRotation={25}
+                    interactive={false}
+                    mixBlendMode="screen"
+                    quality="high"
+                />
             </div>
 
             {/* 2. Sidebar (Chat History) */}
             <Sidebar
                 currentSessionId={currentSessionId}
                 onSessionSelect={setCurrentSessionId}
-                isMobileOpen={isMobileOpen}
-                setIsMobileOpen={setIsMobileOpen}
+                isOpen={isSidebarOpen}
+                setIsOpen={setIsSidebarOpen}
             />
 
             {/* 3. Main Content Area */}
@@ -68,8 +52,8 @@ const HUD = () => {
                 {/* Top Header / Status Bar */}
                 <div className="absolute top-0 left-0 w-full p-6 flex justify-between items-center z-40 pointer-events-none">
                     <div className="flex items-center gap-4 pointer-events-auto">
-                        {/* Mobile Menu Button */}
-                        <button onClick={() => setIsMobileOpen(true)} className="md:hidden text-cyan-400">
+                        {/* Sidebar Toggle Button */}
+                        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-cyan-400 hover:text-white transition-colors">
                             <Menu size={24} />
                         </button>
 
@@ -105,10 +89,13 @@ const HUD = () => {
                 <div className="z-20">
                     {activeTab === 'devices' && <SmartDevices />}
                     {activeTab === 'logs' && <Logs />}
+                    {activeTab === 'settings' && <SettingsPanel />}
                 </div>
 
                 {/* Bottom Navigation */}
                 <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
+
+
             </div>
 
         </div>
