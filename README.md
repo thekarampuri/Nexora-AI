@@ -202,5 +202,6 @@ See [OBJECT_DETECTION_GUIDE.md](OBJECT_DETECTION_GUIDE.md#troubleshooting) for c
 - Voice-activated commands
 
 ---
+Note: Need to implement AI automation. 
 
 Built with ❤️ using React, Gemini AI, and YOLOv8
