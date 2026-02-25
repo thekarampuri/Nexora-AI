@@ -394,7 +394,7 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
 
             } else if (command) {
                 // 2. SYSTEM COMMANDS (Only in Default Mode)
-                const PYTHON_API = 'http://localhost:5001';
+                const PYTHON_API = '';
                 const defaultHeaders = { 'Content-Type': 'application/json' };
 
                 if (command.type === 'ui') {
@@ -404,13 +404,31 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                     action = `UI: Show ${command.component}`;
                 }
                 else if (['system', 'media', 'app'].includes(command.type)) {
-                    const endpoint = command.type === 'app' ? '/api/app/launch' : '/api/system/command';
-                    const body = command.type === 'app' ? { app_name: command.app_name } : { action: command.action };
+                    let endpoint = "";
+                    let body = {};
+
+                    if (command.type === 'app') {
+                        endpoint = '/api/app/launch';
+                        body = { app_name: command.app_name };
+                    } else if (command.type === 'system') {
+                        // Map legacy system commands to new specific endpoints
+                        if (['up', 'down', 'mute'].includes(command.action)) {
+                            endpoint = '/api/system/volume';
+                            body = { action: command.action };
+                        } else {
+                            endpoint = '/api/system/command'; // Keep as fallback
+                            body = { action: command.action };
+                        }
+                    } else if (command.type === 'media') {
+                        endpoint = '/api/music/control';
+                        body = { action: command.action };
+                    }
+
                     await fetch(`${PYTHON_API}${endpoint}`, { method: 'POST', headers: defaultHeaders, body: JSON.stringify(body), signal });
                     reply = `${command.type.toUpperCase()}: ${command.action || command.app_name} executed.`;
                 }
                 else if (command.type === 'web') {
-                    await fetch(`${PYTHON_API}/api/web/open`, { method: 'POST', headers: defaultHeaders, body: JSON.stringify({ url: command.url }), signal });
+                    await fetch(`${PYTHON_API}/api/browser/open`, { method: 'POST', headers: defaultHeaders, body: JSON.stringify({ url: command.url }), signal });
                     reply = `Opening ${command.url}...`;
                 }
                 else if (command.type === 'automation') {

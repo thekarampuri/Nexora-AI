@@ -164,7 +164,7 @@ class Jarvis:
         import math
         import tkinter as tk
 
-        city = "Pune"
+        city = os.getenv("USER_CITY", "Mumbai")
         url = f"http://wttr.in/{city}?format=j1"  # Using wttr.in's JSON endpoint
 
         try:

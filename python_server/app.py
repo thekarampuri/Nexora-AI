@@ -3,6 +3,10 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from nura_engine import NuraEngine
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -70,6 +74,7 @@ def music_control():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/api/system/command', methods=['POST', 'OPTIONS'])
 @app.route('/api/system/volume', methods=['POST', 'OPTIONS'])
 def volume_control():
     if request.method == 'OPTIONS':
@@ -212,6 +217,8 @@ def launch_app():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/api/system/command', methods=['POST', 'OPTIONS'])
+@app.route('/api/web/open', methods=['POST', 'OPTIONS'])
 @app.route('/api/browser/open', methods=['POST', 'OPTIONS'])
 def open_browser():
     if request.method == 'OPTIONS':
