@@ -22,8 +22,32 @@ if (!process.env.OPENROUTER_API_KEY) {
 
 import featureRouter from './features/router.js';
 
-app.use(cors());
+// 5. Add proper CORS so requests from http://localhost:5173 (Vite frontend) are allowed.
+app.use(cors({
+    origin: 'http://localhost:5173',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
+
+// 6. Add request logging middleware
+app.use((req, res, next) => {
+    const timestamp = new Date().toISOString();
+    let bodySummary = '';
+
+    if (req.body && Object.keys(req.body).length > 0) {
+        bodySummary = JSON.stringify(req.body);
+        if (bodySummary.length > 100) {
+            bodySummary = bodySummary.substring(0, 97) + '...';
+        }
+    } else {
+        bodySummary = 'empty body';
+    }
+
+    console.log(`[${timestamp}] ${req.method} ${req.originalUrl} - ${bodySummary}`);
+    next();
+});
 
 // Mount Feature Router
 app.use('/api/features', featureRouter);
@@ -32,37 +56,74 @@ const client = new OpenAI({
     baseURL: "https://openrouter.ai/api/v1",
     apiKey: process.env.OPENROUTER_API_KEY,
     defaultHeaders: {
-        "HTTP-Referer": "http://localhost:5000", // Optional, for including your app on openrouter.ai rankings.
-        "X-Title": "Nexora AI", // Optional. Shows in rankings on openrouter.ai.
+        "HTTP-Referer": "http://localhost:5000",
+        "X-Title": "Nexora AI",
     }
 });
 
 // --- MODEL CONFIGURATION ---
-const SYSTEM_INSTRUCTION = "You are 'NEXORA', an advanced, multifunctional AI core for a futuristic HUD system.\n" +
-    "Identity: Futuristic, highly intelligent, and helpful.\n" +
-    "Objective: Provide detailed, comprehensive, and well-explained answers. Do NOT be concise. Expand on topics to provide maximum value.\n" +
-    "Capabilities:\n" +
-    "1. General: Chat, help, and information.\n" +
-    "2. Medical: Provide detailed health advice (Disclaimer: Not a doctor).\n" +
-    "3. Code: Explain concepts in depth, debug with clear reasoning, and generate well-commented code.\n" +
-    "4. Math: Solve complex problems step-by-step.\n" +
-    "5. Translation: Translate text fluently.\n" +
-    "6. System: Output [REMINDER|YYYY-MM-DD HH:MM|Message] or [TIMER|Minutes|Message].\n" +
-    "7. Computer Control: To control the PC, output a command on a new line:\n" +
-    "   - Open App: [AUTOMATION|APP|OPEN|app_name]\n" +
-    "   - Open Website: [AUTOMATION|WEB|OPEN|url]\n" +
-    "   - Google Search: [AUTOMATION|WEB|SEARCH|query]\n" +
-    "   - YouTube: [AUTOMATION|YOUTUBE|SEARCH_PLAY|query]\n" +
-    "   - Media/Volume: [AUTOMATION|SYSTEM|VOLUME|UP/DOWN/MUTE] or [AUTOMATION|MEDIA|PLAY/PAUSE/NEXT]\n" +
-    "IMPORTANT: Do NOT bold or format the automation tag. Output it exactly as raw text at the end.\n" +
-    "Format: Use markdown for the answer. Be thorough. Then output the [AUTOMATION|...] tag.";
+const SYSTEM_INSTRUCTION = `You are 'Nexora', an advanced, smart, concise, and friendly voice-controlled PC automation assistant.
 
-// Priority Order as requested - using OpenRouter model IDs
+Your primary objective is to assist the user by responding naturally in text AND executing system actions via strict automation tags. 
+
+TONE RULES:
+- Speak in a smart, concise, friendly assistant tone.
+- ALWAYS acknowledge the action naturally before appending the tag (e.g., "Sending your message to Akhil now...").
+- If an action cannot be done, explain why briefly and suggest an alternative.
+- You must NEVER ask for confirmation to execute a command—just do it.
+- Strip ALL automation tags from your spoken/displayed text. The automation tag MUST be placed at the very end of your response, on a new line. It is invisible to the user.
+
+AUTOMATION TAG FORMAT:
+You MUST emit the exact automation tags whenever the user requests a system action.
+Format: [AUTOMATION|CATEGORY|ACTION|PARAMS]
+
+SUPPORTED TAGS:
+[AUTOMATION|APP|OPEN|app_name]
+[AUTOMATION|WHATSAPP|SEND|ContactName::message text]
+[AUTOMATION|MAIL|SEND|email@example.com::Subject::Body]
+[AUTOMATION|MAIL|OPEN|inbox]
+[AUTOMATION|SEARCH|GOOGLE|cats]
+[AUTOMATION|SEARCH|YOUTUBE|video or song name]
+[AUTOMATION|MUSIC|PLAY|song name or artist]
+[AUTOMATION|MUSIC|PAUSE|]
+[AUTOMATION|MUSIC|NEXT|]
+[AUTOMATION|MUSIC|PREVIOUS|]
+[AUTOMATION|BROWSER|OPEN|https://url.com]
+[AUTOMATION|SYSTEM|VOLUME|up OR down OR mute OR set::60]
+[AUTOMATION|SYSTEM|BRIGHTNESS|up OR down OR set::70]
+[AUTOMATION|SYSTEM|SCREENSHOT|]
+[AUTOMATION|SYSTEM|LOCK|]
+[AUTOMATION|SYSTEM|SHUTDOWN|now OR in::10]
+[AUTOMATION|SYSTEM|RESTART|]
+[AUTOMATION|FILE|OPEN|C:/path/to/file.txt]
+[AUTOMATION|FILE|CREATE|C:/path/file.txt::file content here]
+[AUTOMATION|CLIPBOARD|COPY|text to copy]
+[AUTOMATION|REMINDER|SET|Reminder title::2025-12-25 10:00]
+[AUTOMATION|TRANSLATE|TEXT|Hello World::hindi]
+[AUTOMATION|WEATHER|GET|city name]
+[AUTOMATION|NEWS|GET|topic]
+
+INTELLIGENT TAG SELECTION RULES:
+- If user says "send message to X on WhatsApp saying Y" → [AUTOMATION|WHATSAPP|SEND|X::Y]
+- If user says "email John about the meeting" → [AUTOMATION|MAIL|SEND|john@...::Meeting::body]
+- If user says "play [song]" → [AUTOMATION|MUSIC|PLAY|song] (try Spotify first, fallback YouTube)
+- If user says "search for X" → [AUTOMATION|SEARCH|GOOGLE|X]
+- If user says "find X on YouTube" or "play X on YouTube" → [AUTOMATION|SEARCH|YOUTUBE|X]
+- If user says "remind me at [time] to [task]" → [AUTOMATION|REMINDER|SET|task::datetime]
+- If user says "what's the weather in X" → [AUTOMATION|WEATHER|GET|X]
+- If user says "translate X to Y language" → [AUTOMATION|TRANSLATE|TEXT|X::Y]
+- For ambiguous contact names (like "Akhil"), use exactly as spoken.
+- For email recipients, ask user to confirm email address if not obvious, include it in body.
+
+Always provide your conversational response first, then output the appropriate tag on the final line.`;
+
 const PRIMARY_MODELS = [
     "google/gemini-2.0-flash-001",
     "google/gemini-pro-1.5",
-    "openai/gpt-3.5-turbo" // Fallback to GPT-3.5 if Gemini fails
+    "openai/gpt-3.5-turbo"
 ];
+
+let globalCurrentModel = PRIMARY_MODELS[0];
 
 /**
  * Helper to generate content with automatic fallback
@@ -70,13 +131,18 @@ const PRIMARY_MODELS = [
 async function generateWithFallback(messages, res) {
     let lastError = null;
 
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
     for (const modelName of PRIMARY_MODELS) {
         try {
-            console.log(`[AI] Attempting connection to model: ${modelName}...`);
+            console.log(`[Nexora] Trying model: ${modelName}`);
 
-            // 15 Second Timeout Promise
+            // 20 Second Timeout Promise
             const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Request timed out after 15s")), 15000)
+                setTimeout(() => reject(new Error("Request timed out after 20s")), 20000)
             );
 
             // AI Request Promise
@@ -92,71 +158,42 @@ async function generateWithFallback(messages, res) {
             // Race against timeout
             const stream = await Promise.race([aiPromise, timeoutPromise]);
 
-            // If we get here, the request was accepted. Now verify stream integrity.
-            // We need to write the first chunk to be sure we have a valid stream.
-
-            let firstChunk = true;
+            console.log(`[Nexora] Connection established with: ${modelName}`);
+            globalCurrentModel = modelName;
 
             for await (const chunk of stream) {
                 const chunkText = chunk.choices[0]?.delta?.content || "";
-
-                // Skip empty chunks (common in some streams)
-                if (!chunkText && !firstChunk) continue;
-
-                // If this is the first successful chunk, we commit to this model
-                if (firstChunk) {
-                    // Even if chunkText is empty, getting a valid stream response means connection is established
-                    console.log(`[AI] Connection established with: ${modelName}`);
-
-                    // Only set headers if not already sent
-                    if (!res.headersSent) {
-                        res.setHeader('Content-Type', 'text/plain');
-                        res.setHeader('Transfer-Encoding', 'chunked');
-                    }
-                    firstChunk = false;
-                }
-
                 if (chunkText) {
-                    res.write(chunkText);
+                    if (chunkText.includes('[') || chunkText.includes(']')) {
+                        console.log('[TAG FOUND]:', chunkText);
+                    }
+                    res.write(`data: ${chunkText}\n\n`);
                 }
             }
 
-            // If we finished the loop without error, we are done.
+            res.write('data: [DONE]\n\n');
             res.end();
-            return; // Exit function, success!
+            return; // Success!
 
         } catch (error) {
-            console.warn(`[AI] Model ${modelName} failed:`, error.message || error);
+            console.warn(`[Nexora] Model ${modelName} failed:`, error.message || error);
             lastError = error;
-            // Continue to next model in loop logic is implicit here
-            console.log(`[AI] Fallback to next model (if available)`);
+            console.log(`[Nexora] Fallback to next model (if available)`);
         }
     }
 
-    // If we exit the loop, all models failed
-    console.error("[AI] All models failed. Falling back to MOCK response.");
+    console.error("[Nexora] All models failed. Falling back to MOCK response.");
 
-    if (!res.headersSent) {
-        // SIMULATE STREAMING MOCK RESPONSE
-        res.setHeader('Content-Type', 'text/plain');
-        res.setHeader('Transfer-Encoding', 'chunked');
+    const mockResponse = "NOTICE: The AI Core is currently offline. Emergency protocols active. Please try again later.\n[AUTOMATION|SYSTEM|WARNING|OFFLINE]";
+    const chunks = mockResponse.match(/.{1,5}/g) || [];
 
-        const mockResponse = "NOTICE: The AI Core is currently offline. " +
-            "Emergency protocols active. Please try again later. " +
-            "[SYSTEM_STATUS: OFFLINE]";
-
-        // Simulate typing delay
-        const chunks = mockResponse.match(/.{1,5}/g) || [];
-        for (const chunk of chunks) {
-            res.write(chunk);
-            await new Promise(r => setTimeout(r, 50)); // 50ms delay per chunk
-        }
-        res.end();
-    } else {
-        // If headers were already sent (e.g. partial stream), we can't send JSON.
-        // We just end the response. Frontend will see a broken stream.
-        res.end();
+    for (const chunk of chunks) {
+        res.write(`data: ${chunk}\n\n`);
+        await new Promise(r => setTimeout(r, 50));
     }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -167,10 +204,7 @@ app.post('/api/chat', async (req, res) => {
             return res.status(400).json({ error: "Message is required" });
         }
 
-        // Convert user message to OpenRouter/OpenAI message format
         const messages = [{ role: 'user', content: message }];
-
-        // Execute fallback logic
         await generateWithFallback(messages, res);
 
     } catch (error) {
@@ -182,9 +216,20 @@ app.post('/api/chat', async (req, res) => {
                 message: "An unexpected internal error occurred."
             });
         } else {
+            res.write(`data: ERROR: ${error.message}\n\n`);
+            res.write('data: [DONE]\n\n');
             res.end();
         }
     }
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        model: globalCurrentModel,
+        uptime: process.uptime()
+    });
 });
 
 // Start Server

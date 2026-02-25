@@ -16,6 +16,11 @@ import WeatherWidget from './features/WeatherWidget';
 import NewsFeed from './features/NewsFeed';
 import DigitalClock from './features/DigitalClock';
 
+// --- NEW AUTOMATION IMPORTS ---
+import { parseAutomationTags } from '../utils/automationParser';
+import { useAutomation } from '../hooks/useAutomation';
+import AutomationToast from './AutomationToast';
+
 const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
     const { addLog, toggleDevice, devices } = useApp();
     const { currentUser } = useAuth();
@@ -34,6 +39,10 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
     const [copiedId, setCopiedId] = useState(null);
     const [streamingMessage, setStreamingMessage] = useState(null);
     const [showStop, setShowStop] = useState(false);
+
+    // --- AUTOMATION STATE ---
+    const { executeAutomation, isExecuting, lastResult } = useAutomation();
+    const [toasts, setToasts] = useState([]);
 
     // --- FEATURE STATE ---
     const [mode, setMode] = useState('default');
@@ -454,72 +463,80 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-                let aiText = "";
-                setStreamingMessage("▋");
+                let fullResponseBuffer = "";
+                let sseBuffer = "";
+                let streamingDisplay = "▋";
+
+                setStreamingMessage(streamingDisplay);
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    aiText += decoder.decode(value, { stream: true });
-                    setStreamingMessage(aiText + "▋");
-                    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-                }
 
-                // Parse Reminders/Timers
-                const reminderMatch = aiText.match(/\[(REMINDER|TIMER)\|([^\|]+)\|([^\]]+)\]/);
-                if (reminderMatch) {
-                    const [_, type, time, msg] = reminderMatch;
-                    addLog(`System: Setting ${type} for ${time} - ${msg}`);
-                    // In a real app, save to DB or set setTimeout. For demo:
-                    if (type === 'TIMER') {
-                        const mins = parseInt(time);
-                        setTimeout(() => {
-                            speakResponse(`Reminder: ${msg}`);
-                            alert(`REMINDER: ${msg}`);
-                        }, mins * 60000);
-                    }
-                }
+                    sseBuffer += decoder.decode(value, { stream: true });
 
-                // Parse Automation Commands (Robust Regex)
-                const autoMatch = aiText.match(/\[\s*AUTOMATION\s*\|\s*([^\|]+)\s*\|\s*([^\|]+)\s*\|\s*([^\]]+)\s*\]/i);
-                if (autoMatch) {
-                    const [_, service, action, data] = autoMatch;
-                    const cleanData = data.trim();
-                    const cleanAction = action.trim().toLowerCase();
-                    const cleanService = service.trim().toUpperCase();
+                    let newEvents = false;
+                    const parts = sseBuffer.split('\n\n');
+                    // The last part might be incomplete, keep it in the buffer
+                    sseBuffer = parts.pop();
 
-                    addLog(`System: Executing ${cleanService} - ${cleanAction}`);
-                    const PYTHON_API = 'http://localhost:5001';
-                    const headers = { 'Content-Type': 'application/json' };
-
-                    try {
-                        if (cleanService === 'APP') {
-                            await fetch(`${PYTHON_API}/api/app/launch`, { method: 'POST', headers, body: JSON.stringify({ app_name: cleanData }) });
-                        } else if (cleanService === 'WEB') {
-                            if (cleanAction === 'search') {
-                                await fetch(`${PYTHON_API}/api/web/search`, { method: 'POST', headers, body: JSON.stringify({ query: cleanData }) });
-                            } else {
-                                await fetch(`${PYTHON_API}/api/web/open`, { method: 'POST', headers, body: JSON.stringify({ url: cleanData }) });
-                            }
-                        } else if (cleanService === 'YOUTUBE') {
-                            await fetch(`${PYTHON_API}/api/automation/youtube`, { method: 'POST', headers, body: JSON.stringify({ action: 'search_play', query: cleanData }) });
-                        } else if (cleanService === 'SYSTEM') {
-                            await fetch(`${PYTHON_API}/api/system/command`, { method: 'POST', headers, body: JSON.stringify({ action: cleanData }) }); // up/down/mute
-                        } else if (cleanService === 'MEDIA') {
-                            await fetch(`${PYTHON_API}/api/system/command`, { method: 'POST', headers, body: JSON.stringify({ action: cleanData }) }); // play/pause/next
+                    for (const part of parts) {
+                        if (part.startsWith('data: ')) {
+                            const data = part.slice(6);
+                            if (data.trim() === '[DONE]') continue;
+                            fullResponseBuffer += data;
+                            newEvents = true;
                         }
-                    } catch (e) {
-                        console.error("Automation Failed", e);
-                        addLog("System: Automation failed to execute.");
+                    }
+
+                    if (newEvents) {
+                        // Real-time tag stripping during playback to avoid flashing [AUTOMATION...]
+                        const { cleanText } = parseAutomationTags(fullResponseBuffer);
+                        setStreamingMessage(cleanText + "▋");
+                        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
                     }
                 }
 
-                // Save AI Response
+                // Stream complete. Perform final tag extraction.
+                const { cleanText: finalDisplay, tags } = parseAutomationTags(fullResponseBuffer);
+
+                // Save AI Response to database without the raw meta tags
                 await addDoc(collection(db, "users", currentUser.uid, "conversations", activeSessionId, "messages"), {
-                    role: 'assistant', content: aiText, timestamp: serverTimestamp()
+                    role: 'assistant', content: finalDisplay, timestamp: serverTimestamp()
                 });
 
-                speakResponse(aiText);
+                // Execute mapped automation endpoints sequentially
+                if (tags && tags.length > 0) {
+                    // Pre-register toast shells to display immediately
+                    const newToasts = tags.map(t => ({
+                        id: Math.random().toString(36).substring(7),
+                        tag: t,
+                        label: getTagLabel(t),
+                        status: 'pending'
+                    }));
+                    setToasts(prev => [...prev, ...newToasts]);
+
+                    // Fire headless async hook runner (updates toasts internally or via callback, here we manage state via component for UI sync)
+                    // We run executeAutomation and let the hook handle the fetch. We could also just do it inline here but hook is cleaner.
+                    for (let i = 0; i < tags.length; i++) {
+                        const currentTag = tags[i];
+                        const tid = newToasts[i].id;
+
+                        try {
+                            const result = await executeAutomation([currentTag]);
+                            if (result && result.status !== 'error') {
+                                setToasts(prev => prev.map(t => t.id === tid ? { ...t, status: 'success' } : t));
+                            } else {
+                                setToasts(prev => prev.map(t => t.id === tid ? { ...t, status: 'error' } : t));
+                            }
+                        } catch (e) {
+                            setToasts(prev => prev.map(t => t.id === tid ? { ...t, status: 'error' } : t));
+                        }
+                    }
+                }
+
+                // Audio Spoken Readback
+                speakResponse(finalDisplay);
             }
 
 
@@ -742,6 +759,22 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
                     )}
                     <div ref={messagesEndRef} />
                 </div>
+            </div>
+
+            {/* Automation Toasts Overlay */}
+            <div className="absolute bottom-28 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+                <AnimatePresence>
+                    {toasts.map(toast => (
+                        <AutomationToast
+                            key={toast.id}
+                            id={toast.id}
+                            tag={toast.tag}
+                            label={toast.label}
+                            status={toast.status}
+                            onDismiss={(id) => setToasts(prev => prev.filter(t => t.id !== id))}
+                        />
+                    ))}
+                </AnimatePresence>
             </div>
 
             {/* Input Area */}
