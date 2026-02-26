@@ -171,18 +171,33 @@ class NuraEngine:
                     pywhatkit.sendwhatmsg(contact, message, hours, minutes, wait_time=15, tab_close=True)
                     return {"status": "success", "method": "pywhatkit"}
             
-            # c) Final fallback browser link
-            encoded_msg = self._encode_url(message)
-            # Web WhatsApp 'send' endpoint works best with pure phone numbers, but we launch it anyway
-            url = f"https://web.whatsapp.com/send?phone={contact}&text={encoded_msg}"
-            if webbrowser:
-                webbrowser.open(url)
-            
-            if pyautogui:
-                # Give it time to load, then press enter
-                time.sleep(10)
-                pyautogui.press('enter')
-            
+            # c) Final fallback browser link (WhatsApp Web)
+            if webbrowser and pyautogui:
+                # If contact is a pure phone number format, use the send API
+                if contact.startswith("+") and contact[1:].isdigit():
+                    encoded_msg = self._encode_url(message)
+                    url = f"https://web.whatsapp.com/send?phone={contact}&text={encoded_msg}"
+                    webbrowser.open(url)
+                    time.sleep(12)  # Wait for web.whatsapp.com to fully load the chat
+                    pyautogui.press('enter')
+                else:
+                    # Otherwise, just open WhatsApp Web, search for the contact name, and send
+                    webbrowser.open("https://web.whatsapp.com")
+                    time.sleep(12) # Wait for page load
+                    
+                    # Search
+                    pyautogui.hotkey('ctrl', 'alt', '/') # WhatsApp web search shortcut
+                    time.sleep(1)
+                    pyautogui.write(contact)
+                    time.sleep(2)
+                    pyautogui.press('enter')
+                    time.sleep(1)
+                    
+                    # Type message
+                    pyautogui.write(message)
+                    time.sleep(0.5)
+                    pyautogui.press('enter')
+
             return {"status": "success", "method": "browser_fallback"}
         except Exception as e:
             return {"error": str(e)}

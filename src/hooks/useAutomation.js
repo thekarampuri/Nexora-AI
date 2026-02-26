@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { buildApiCall, getTagLabel } from '../utils/automationParser';
 
-const PYTHON_SERVER_URL = '';
+const PYTHON_SERVER_URL = 'http://localhost:5001';
 
 export const useAutomation = () => {
     const [isExecuting, setIsExecuting] = useState(false);

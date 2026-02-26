@@ -17,7 +17,7 @@ import NewsFeed from './features/NewsFeed';
 import DigitalClock from './features/DigitalClock';
 
 // --- NEW AUTOMATION IMPORTS ---
-import { parseAutomationTags } from '../utils/automationParser';
+import { parseAutomationTags, getTagLabel } from '../utils/automationParser';
 import { useAutomation } from '../hooks/useAutomation';
 import AutomationToast from './AutomationToast';
 
@@ -394,7 +394,7 @@ const ChatInterface = ({ currentSessionId, onSessionSelect }) => {
 
             } else if (command) {
                 // 2. SYSTEM COMMANDS (Only in Default Mode)
-                const PYTHON_API = '';
+                const PYTHON_API = 'http://localhost:5001';
                 const defaultHeaders = { 'Content-Type': 'application/json' };
 
                 if (command.type === 'ui') {
