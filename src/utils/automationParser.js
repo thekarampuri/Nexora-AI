@@ -66,8 +66,8 @@ export const buildApiCall = (tag) => {
         if (category === 'MUSIC' && action === 'PLAY') {
             return { endpoint: '/api/music/play', body: { query: params[0] } };
         }
-        if (category === 'MUSIC' && ['PAUSE', 'NEXT', 'PREVIOUS'].includes(action)) {
-            return { endpoint: '/api/music/control', body: { action: action.toLowerCase() } };
+        if (category === 'MEDIA') {
+            return { endpoint: '/api/media/control', body: { action: action.toLowerCase() } };
         }
         if (category === 'BROWSER' && action === 'OPEN') {
             return { endpoint: '/api/browser/open', body: { url: params[0] } };
@@ -81,20 +81,14 @@ export const buildApiCall = (tag) => {
         if (category === 'SYSTEM' && action === 'SCREENSHOT') {
             return { endpoint: '/api/system/screenshot', body: {} };
         }
-        if (category === 'SYSTEM' && action === 'LOCK') {
-            return { endpoint: '/api/system/lock', body: {} };
+        if (category === 'POWER') {
+            return { endpoint: '/api/system/power', body: { action: action.toLowerCase() } };
         }
-        if (category === 'SYSTEM' && action === 'SHUTDOWN') {
-            return { endpoint: '/api/system/shutdown', body: { delay: parseInt(params[1]) || 0 } };
+        if (category === 'DOCUMENT' && action === 'CREATE') {
+            return { endpoint: '/api/document/create', body: { filename: params[0], content: params[1] || '' } };
         }
-        if (category === 'SYSTEM' && action === 'RESTART') {
-            return { endpoint: '/api/system/restart', body: {} };
-        }
-        if (category === 'FILE' && action === 'OPEN') {
-            return { endpoint: '/api/file/open', body: { path: params[0] } };
-        }
-        if (category === 'FILE' && action === 'CREATE') {
-            return { endpoint: '/api/file/create', body: { path: params[0], content: params[1] || '' } };
+        if (category === 'FILE' && ['CREATE_FOLDER', 'CREATE_CODE', 'RENAME', 'DELETE', 'READ'].includes(action)) {
+            return { endpoint: '/api/file/manager', body: { action: action.toLowerCase(), params: params } };
         }
         if (category === 'CLIPBOARD' && action === 'COPY') {
             return { endpoint: '/api/clipboard/copy', body: { text: params[0] } };
@@ -141,18 +135,24 @@ export const getTagLabel = (tag) => {
         case 'SEARCH_GOOGLE': return `Searching Google for "${p0}"...`;
         case 'SEARCH_YOUTUBE': return `Searching YouTube for "${p0}"...`;
         case 'MUSIC_PLAY': return `Playing "${p0}"...`;
-        case 'MUSIC_PAUSE': return `Pausing media...`;
-        case 'MUSIC_NEXT': return `Skipping to next track...`;
-        case 'MUSIC_PREVIOUS': return `Going back to previous track...`;
+        case 'MEDIA_PAUSE': return `Pausing media...`;
+        case 'MEDIA_NEXT': return `Skipping to next track...`;
+        case 'MEDIA_PREV': return `Going to previous track...`;
+        case 'MEDIA_FULLSCREEN': return `Toggling fullscreen...`;
         case 'BROWSER_OPEN': return `Opening ${p0}...`;
         case 'SYSTEM_VOLUME': return `Adjusting volume (${p0})...`;
         case 'SYSTEM_BRIGHTNESS': return `Adjusting display brightness...`;
         case 'SYSTEM_SCREENSHOT': return `Saving screenshot to Desktop...`;
-        case 'SYSTEM_LOCK': return `Locking workstation...`;
-        case 'SYSTEM_SHUTDOWN': return p0 ? `Scheduling shutdown...` : `Shutting down PC...`;
-        case 'SYSTEM_RESTART': return `Restarting workstation...`;
-        case 'FILE_OPEN': return `Opening file...`;
-        case 'FILE_CREATE': return `Creating file ${p0}...`;
+        case 'POWER_LOCK': return `Locking workstation...`;
+        case 'POWER_SHUTDOWN': return `Shutting down PC...`;
+        case 'POWER_SLEEP': return `Putting PC to sleep...`;
+        case 'POWER_RESTART': return `Restarting workstation...`;
+        case 'DOCUMENT_CREATE': return `Generating document ${p0}...`;
+        case 'FILE_CREATE_FOLDER': return `Creating folder ${p0}...`;
+        case 'FILE_CREATE_CODE': return `Saving code to ${p0}...`;
+        case 'FILE_RENAME': return `Renaming file...`;
+        case 'FILE_DELETE': return `Deleting ${p0}...`;
+        case 'FILE_READ': return `Reading ${p0}...`;
         case 'CLIPBOARD_COPY': return `Copied text to clipboard`;
         case 'REMINDER_SET': return `Setting reminder: "${p0}"`;
         case 'TRANSLATE_TEXT': return `Translating text to ${params[1]}...`;

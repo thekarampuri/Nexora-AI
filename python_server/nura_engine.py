@@ -556,3 +556,118 @@ class NuraEngine:
             return {"status": "success", "url": url}
         except Exception as e:
             return {"error": str(e)}
+
+    # --- 21. ADVANCED MEDIA CONTROL ---
+    def media_control(self, action: str):
+        try:
+            if not pyautogui:
+                return {"error": "pyautogui not installed for media controls"}
+            action = action.lower()
+            if action in ['pause', 'play']:
+                pyautogui.press('playpause')
+            elif action in ['next', 'skip']:
+                pyautogui.press('nexttrack')
+            elif action in ['prev', 'previous', 'back']:
+                pyautogui.press('prevtrack')
+            elif action == 'fullscreen':
+                pyautogui.press('f')
+            else:
+                return {"error": f"Unknown media action: {action}"}
+            return {"status": "success", "action": action}
+        except Exception as e:
+            return {"error": str(e)}
+
+    # --- 22. DOCUMENT GENERATION ---
+    def document_create(self, filename: str, content: str):
+        try:
+            desktop = os.path.join(os.environ["USERPROFILE"], "Desktop")
+            filepath = os.path.join(desktop, filename)
+            
+            # Write text content
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+                
+            if os.path.exists(filepath):
+                os.startfile(filepath)
+                return {"status": "success", "path": filepath, "action": "created and opened"}
+            return {"error": "File creation failed silently."}
+        except Exception as e:
+            return {"error": str(e)}
+
+    # --- 23. DESKTOP FILE MANAGER ---
+    def file_manager(self, action: str, params: list):
+        import shutil
+        try:
+            desktop = os.path.join(os.environ["USERPROFILE"], "Desktop")
+            action = action.lower()
+            
+            if action == 'create_folder':
+                folder_name = params[0]
+                path = os.path.join(desktop, folder_name)
+                os.makedirs(path, exist_ok=True)
+                return {"status": "success", "action": "create_folder", "path": path}
+                
+            elif action == 'create_code':
+                filename = params[0]
+                content = params[1] if len(params) > 1 else ""
+                path = os.path.join(desktop, filename)
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                os.startfile(path)
+                return {"status": "success", "action": "create_code", "path": path}
+                
+            elif action == 'rename':
+                old_name = params[0]
+                new_name = params[1]
+                old_path = os.path.join(desktop, old_name)
+                new_path = os.path.join(desktop, new_name)
+                if os.path.exists(old_path):
+                    os.rename(old_path, new_path)
+                    return {"status": "success", "action": "rename"}
+                return {"error": "Original file/folder not found on Desktop."}
+                
+            elif action == 'delete':
+                target = params[0]
+                path = os.path.join(desktop, target)
+                if os.path.exists(path):
+                    if os.path.isdir(path):
+                        shutil.rmtree(path)
+                    else:
+                        os.remove(path)
+                    return {"status": "success", "action": "delete"}
+                return {"error": "Target not found on Desktop."}
+                
+            elif action == 'read':
+                target = params[0]
+                path = os.path.join(desktop, target)
+                if os.path.exists(path) and os.path.isfile(path):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        text = f.read()
+                    return {"status": "success", "action": "read", "content": text[:1000]} # Limit reading to 1000 chars
+                return {"error": "File not found or is a directory."}
+                
+            return {"error": f"Unknown file manager action: {action}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    # --- 24. SYSTEM POWER PORTAL ---
+    def system_power(self, action: str):
+        try:
+            action = action.lower()
+            if action == 'lock':
+                if ctypes:
+                    ctypes.windll.user32.LockWorkStation()
+                else:
+                    os.system("rundll32.exe user32.dll,LockWorkStation")
+            elif action == 'sleep':
+                os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
+            elif action == 'shutdown':
+                os.system("shutdown /s /t 5")
+            elif action == 'restart':
+                os.system("shutdown /r /t 5")
+            else:
+                return {"error": f"Unknown power action: {action}"}
+            
+            return {"status": "success", "action": action}
+        except Exception as e:
+            return {"error": str(e)}

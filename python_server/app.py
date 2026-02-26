@@ -230,6 +230,50 @@ def open_browser():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/api/media/control', methods=['POST', 'OPTIONS'])
+def media_control():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    print(f"[NEXORA] {request.method} {request.path} — {request.json}")
+    try:
+        data = request.json or {}
+        return jsonify(engine.media_control(data.get('action', 'play'))), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/document/create', methods=['POST', 'OPTIONS'])
+def document_create():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    print(f"[NEXORA] {request.method} {request.path} — {request.json}")
+    try:
+        data = request.json or {}
+        return jsonify(engine.document_create(data.get('filename', ''), data.get('content', ''))), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/file/manager', methods=['POST', 'OPTIONS'])
+def file_manager():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    print(f"[NEXORA] {request.method} {request.path} — {request.json}")
+    try:
+        data = request.json or {}
+        return jsonify(engine.file_manager(data.get('action', ''), data.get('params', []))), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/system/power', methods=['POST', 'OPTIONS'])
+def system_power():
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    print(f"[NEXORA] {request.method} {request.path} — {request.json}")
+    try:
+        data = request.json or {}
+        return jsonify(engine.system_power(data.get('action', ''))), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/health', methods=['GET', 'OPTIONS'])
 def health_check():
     if request.method == 'OPTIONS':
